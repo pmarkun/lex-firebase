@@ -1,0 +1,30 @@
+{
+  "name": "functions",
+  "description": "Cloud Functions for Firebase",
+  "scripts": {
+    "serve": "firebase emulators:start --only functions",
+    "shell": "firebase functions:shell",
+    "start": "npm run shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "engines": {
+    "node": "18"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "@google-cloud/firestore": "^7.7.0",
+    "@grpc/grpc-js": "^1.10.8",
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "firebase-admin": "^12.1.1",
+    "firebase-functions": "^5.0.0",
+    "googleapis": "^137.1.0",
+    "openai": "^4.47.1",
+    "twilio": "^5.1.0"
+  },
+  "devDependencies": {
+    "firebase-functions-test": "^3.1.0"
+  },
+  "private": true
+}
