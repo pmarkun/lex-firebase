@@ -12,6 +12,8 @@ const { DONOR_TOKENS } = process.env;
 const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM } = process.env;
 const { roles } = require('./roles');
 
+const cliente = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
 
 
 
@@ -89,7 +91,6 @@ exports.receiveDonation = onRequest(async (req, res) => {
     }
 
 
-    const cliente = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
     switch(evento) {
         case 'new_donation': 
             // TODO: enviar mensagem template dizendo que recebeu
@@ -109,7 +110,7 @@ exports.receiveDonation = onRequest(async (req, res) => {
 
         case 'donation_captured': 
             // definir role como user caso seja guest
-            db.collection('users').doc(userId).update({
+            await db.collection('users').doc(userId).update({
                 fullName: dados.donor_name,
                 role: !user.role || user.role === roles.guest ? roles.user : user.role,
                 maxTokens: FieldValue.increment(parseInt(DONOR_TOKENS)),
