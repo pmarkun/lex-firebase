@@ -200,8 +200,11 @@ exports.receiveMessage = onRequest(async (req, res) => {
 
         // Criar e fazer o poll da execução
         const run = await openai.beta.threads.runs.createAndPoll(threadId, {
-            assistant_id: assistantId
+            assistant_id: assistantId,
+            max_completion_tokens: process.env.MAX_COMPLETION_TOKENS | 8096,
+            max_prompt_tokens: process.env.MAX_PROMPT_TOKENS | 60000
         });
+        
         logger.info("Run completed", { runId: run.id, status: run.status });
 
         // Verificar se a execução foi completada e obter a resposta
