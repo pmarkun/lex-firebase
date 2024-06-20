@@ -7,7 +7,7 @@ const twilio = require('twilio');
 
 const tiktoken = require('tiktoken');
 const { limpaNumero, adicionaNove } = require('./util');
-
+const { roles } = require('./roles');
 
 
 require('dotenv').config();
@@ -56,6 +56,7 @@ async function checkAndUpdateUserTokens(userId, profileName) {
                 phone: userId,
                 profileName,
                 currentTokens: 0,
+                role: roles.guest,
                 maxTokens: 0, // Defina o limite de tokens inicial como 0
                 lastMessageTime: FieldValue.serverTimestamp()
             };
