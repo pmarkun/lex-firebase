@@ -43,6 +43,29 @@ const calculateTokens = (text, encoding='') => {
     return tokensLength;
 }
 
+// Função para dividir a mensagem em partes menores
+function splitMessage(message, maxLength) {
+    const messages = [];
+    let startIndex = 0;
+
+    while (startIndex < message.length) {
+        let endIndex = startIndex + maxLength;
+
+        if (endIndex < message.length) {
+            // Tentar encontrar o último ponto final antes do limite de comprimento
+            const lastPeriod = message.lastIndexOf('.', endIndex);
+
+            if (lastPeriod > startIndex) {
+                endIndex = lastPeriod + 1; // Inclui o ponto final
+            }
+        }
+
+        messages.push(message.substring(startIndex, endIndex).trim());
+        startIndex = endIndex;
+    }
+
+    return messages;
+}
 // Função para verificar tokens e atualizar se necessário
 async function checkAndUpdateUserTokens(userId, profileName) {
     try {
@@ -180,8 +203,11 @@ exports.receiveMessage = onRequest(async (req, res) => {
             console.log('\n\n\n');
 
             // Formatar a resposta para Twilio
+            const responseMessages = splitMessage(assistantMessage, 1500);
+
             const twiml = new twilio.twiml.MessagingResponse();
-            twiml.message(assistantMessage);
+            responseMessages.forEach(msg => twiml.message(msg));
+
 
             // Calcular tokens usados e atualizar tokens do usuário
             // TODO: verificar se a resposta inclui total de tokens utilizados.
