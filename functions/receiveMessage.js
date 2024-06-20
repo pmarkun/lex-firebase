@@ -7,17 +7,20 @@ const twilio = require('twilio');
 
 const tiktoken = require('tiktoken');
 const { limpaNumero, adicionaNove } = require('./util');
-const { roles } = require('./roles');
-
 
 require('dotenv').config();
+const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM } = process.env;
+const { OPENAI_API_KEY, ASSISTANT_ID } = process.env;
+const { roles } = require('./roles');
+
+const cliente = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 
-const apiKey = process.env.OPENAI_API_KEY;
+const apiKey = OPENAI_API_KEY;
 if (!apiKey) {
     throw new Error("Missing required environment variable: OPENAI_API_KEY");
 }
-const assistantId = process.env.ASSISTANT_ID;
+const assistantId = ASSISTANT_ID;
 if (!assistantId) {
     throw new Error("Missing required environment variable: ASSISTANT_ID");
 }
@@ -66,6 +69,7 @@ function splitMessage(message, maxLength) {
 
     return messages;
 }
+
 // Função para verificar tokens e atualizar se necessário
 async function checkAndUpdateUserTokens(userId, profileName) {
     try {
@@ -182,6 +186,12 @@ exports.receiveMessage = onRequest(async (req, res) => {
         }
 
         // TODO: verificar se mensagem ultrapassa limite de tokens disponíveis
+        const twiml = new twilio.twiml.MessagingResponse();
+        res.writeHead(200, {'Content-Type': 'text/xml'});
+        res.end(twiml.toString());
+
+
+        // BACKGROUND AREA
 
         // Obter ou criar uma thread para o usuário
         const threadId = await getOrCreateThread(from);
@@ -219,15 +229,21 @@ exports.receiveMessage = onRequest(async (req, res) => {
             const twiml = new twilio.twiml.MessagingResponse();
             const responseMessages = splitMessage(assistantMessage, 1500);
 
-            responseMessages.forEach(msg => twiml.message(msg));
+            await responseMessages.forEach(async msg => {
+                twiml.message(msg)
+                await cliente.messages.create({
+                    from: TWILIO_FROM,
+                    to: req.body.From,
+                    body: msg
+                });
+            });
+
 
             // Calcular tokens usados e atualizar tokens do usuário
             // TODO: verificar se a resposta inclui total de tokens utilizados.
             const tokensUsed = calculateTokens(incomingMessage) + calculateTokens(assistantMessage); //assistantMessage.length * 3; // Cálculo provisório de tokens
             await updateUserTokens(userRef, tokensUsed);
 
-            res.writeHead(200, {'Content-Type': 'text/xml'});
-            res.end(twiml.toString());
         } else {
             logger.error("Run did not complete successfully", { status: run.status });
             res.status(500).send("Failed to get a response from assistant");
