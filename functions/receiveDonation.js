@@ -10,6 +10,7 @@ const { limpaNumero, adicionaPais, primeiroNome } = require('./util');
 require('dotenv').config();
 const { DONOR_TOKENS } = process.env;
 const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM } = process.env;
+const { roles } = require('./roles');
 
 
 
@@ -57,17 +58,35 @@ exports.receiveDonation = onRequest(async (req, res) => {
                 break;
         }
     });
+    const userId = adicionaPais(limpaNumero(dados.donor_phone));
+    const nome = primeiroNome(dados.donor_name);
+
 
     // TODO: salvar registro do evento no Firestore
-    db.collection('donations').doc(dados.id).set({
+    await db.collection('users').doc(userId).collection('donations').doc(dados.id).set({
         ...dados,
+        userId,
         status: evento,
         updatedAt: FieldValue.serverTimestamp(),
     });
 
 
-    const userId = adicionaPais(limpaNumero(dados.donor_phone));
-    const nome = primeiroNome(dados.donor_name);
+    // Verificar se usuário existe
+    let user = await db.collection('users').doc(userId).get().then(s => {
+        if (s.exists) {
+            return s.data();
+        }
+        return null;
+    });
+    if (!user) {
+        logger.warn(`User ${userId} does not exist!`);
+        user = {
+            role: roles.guest,
+            phone: userId,
+            currentTokens: 0,
+            maxTokens: 0
+        };
+    }
 
 
     const cliente = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -79,21 +98,31 @@ exports.receiveDonation = onRequest(async (req, res) => {
             //     to: `whatsapp:${userId}`,
             //     body: `Recebemos um pedido de doação em nome de ${nome}.\n\nAssim que confirmado liberaremos o uso da Lex!`
             // })
+
+            await db.collection('users').doc(userId).update({
+                fullName: dados.donor_name,
+                role: !user.role ? roles.guest : user.role,
+                "donations.intents": FieldValue.increment(1),
+                updatedAt: FieldValue.serverTimestamp(),
+            });
             break;
 
         case 'donation_captured': 
-            // TODO: adicionar tokens no usuário
-            // TODO: notificar WhatsApp sobre doação
+            // definir role como user caso seja guest
             db.collection('users').doc(userId).update({
+                fullName: dados.donor_name,
+                role: !user.role || user.role === roles.guest ? roles.user : user.role,
                 maxTokens: FieldValue.increment(parseInt(DONOR_TOKENS)),
                 updatedAt: FieldValue.serverTimestamp(),
+                "donations.completed": FieldValue.increment(1)
             });
-            cliente.messages.create({
+
+            // notificar WhatsApp sobre doação
+            await cliente.messages.create({
                 from: TWILIO_FROM,
                 to: `whatsapp:${userId}`,
                 body: `Olá ${nome}!\n\nAcabamos de receber sua doação e agora você já pode conversar com a Lex!`
-            })
-
+            });
             break;
     }
 
