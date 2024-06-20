@@ -89,7 +89,7 @@ async function checkAndUpdateUserTokens(userId, profileName) {
         const now = new Date();
         const lastMessageTime = userData.lastMessageTime;
         const currentTokens = userData.currentTokens || 0;
-        const maxTokens = userData.maxTokens;
+        const maxTokens = userData.maxTokens || 0;
 
         if (lastMessageTime && (now - lastMessageTime) / (1000 * 60 * 60) >= 24) { // TODO: qual regra é essa?
             await userRef.update({
@@ -159,13 +159,17 @@ exports.receiveMessage = onRequest(async (req, res) => {
         // Verificar permissões do usuário e tokens
         const { currentTokens, maxTokens, userRef, role } = await checkAndUpdateUserTokens(from, profileName);
 
+        logger.info(`${from}: maxTokens ${maxTokens}`);
         switch(role) {
             case roles.admin:
             case roles.editor:
+                logger.info('Role is Admin or Editor');
                 // Não fazer nada e permitir conversar!
                 break;
             case roles.user:
             case roles.guest:
+            default:
+                logger.info('Role is Guest or User');
                 if (maxTokens === 0) {
                     // Usuário não autorizado
                     const twiml = new twilio.twiml.MessagingResponse();
@@ -174,7 +178,7 @@ exports.receiveMessage = onRequest(async (req, res) => {
                     res.writeHead(200, {'Content-Type': 'text/xml'});
                     return res.end(twiml.toString());
                 }
-                default:
+                break;
         }
 
         // TODO: verificar se mensagem ultrapassa limite de tokens disponíveis
