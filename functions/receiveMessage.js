@@ -99,7 +99,7 @@ async function checkAndUpdateUserTokens(userId, profileName) {
             userData.currentTokens = 0;
         }
 
-        return { currentTokens: userData.currentTokens, maxTokens, userRef };
+        return { currentTokens: userData.currentTokens, maxTokens, userRef, role: userData.role };
     } catch (error) {
         logger.error("Error in checkAndUpdateUserTokens", { error: error.message });
         throw error;
@@ -157,15 +157,24 @@ exports.receiveMessage = onRequest(async (req, res) => {
         logger.info("Incoming message received", { message: incomingMessage, from, profileName });
 
         // Verificar permissões do usuário e tokens
-        const { currentTokens, maxTokens, userRef } = await checkAndUpdateUserTokens(from, profileName);
+        const { currentTokens, maxTokens, userRef, role } = await checkAndUpdateUserTokens(from, profileName);
 
-        if (maxTokens === 0) {
-            // Usuário não autorizado
-            const twiml = new twilio.twiml.MessagingResponse();
-            twiml.message(`Oi, eu sou Lex, a primeira inteligência artificial legislativa do mundo. Se você chegou até aqui e quer participar dessa transformação, acesse lex.tec.br e apoie nosso projeto.\n\nCom isso você vai ter acesso à todas as minhas funcionalidades e ajudar a construir o futuro da política.`);
-
-            res.writeHead(200, {'Content-Type': 'text/xml'});
-            return res.end(twiml.toString());
+        switch(role) {
+            case roles.admin:
+            case roles.editor:
+                // Não fazer nada e permitir conversar!
+                break;
+            case roles.user:
+            case roles.guest:
+                if (maxTokens === 0) {
+                    // Usuário não autorizado
+                    const twiml = new twilio.twiml.MessagingResponse();
+                    twiml.message(`Oi, eu sou Lex, a primeira inteligência artificial legislativa do mundo. Se você chegou até aqui e quer participar dessa transformação, acesse lex.tec.br e apoie nosso projeto.\n\nCom isso você vai ter acesso à todas as minhas funcionalidades e ajudar a construir o futuro da política.`);
+        
+                    res.writeHead(200, {'Content-Type': 'text/xml'});
+                    return res.end(twiml.toString());
+                }
+                default:
         }
 
         // TODO: verificar se mensagem ultrapassa limite de tokens disponíveis
