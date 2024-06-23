@@ -226,7 +226,7 @@ exports.receiveMessage = onRequest(async (req, res) => {
                     buffer = buffer.substring(buffer.lastIndexOf(temQuebra ? '\n\n' : '. ') + ( temQuebra ? 2 : 1)).trimStart();
 
                     await cliente.messages.create({
-                        from: TWILIO_FROM,
+                        from: req.body.To,
                         to: req.body.From,
                         body: mensagem
                     });
@@ -237,7 +237,7 @@ exports.receiveMessage = onRequest(async (req, res) => {
 
                 // TODO: nao mandar se buffer estiver vazio
                 await cliente.messages.create({
-                    from: TWILIO_FROM,
+                    from: req.body.To,
                     to: req.body.From,
                     body: buffer
                 });
