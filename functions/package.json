@@ -20,7 +20,7 @@
     "firebase-admin": "^12.1.1",
     "firebase-functions": "^5.0.0",
     "googleapis": "^137.1.0",
-    "openai": "^4.47.1",
+    "openai": "^4.52.0",
     "tiktoken": "^1.0.15",
     "twilio": "^5.1.0"
   },
