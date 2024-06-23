@@ -7,17 +7,20 @@ const twilio = require('twilio');
 
 const tiktoken = require('tiktoken');
 const { limpaNumero, adicionaNove } = require('./util');
-const { roles } = require('./roles');
-
 
 require('dotenv').config();
+const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM } = process.env;
+const { OPENAI_API_KEY, ASSISTANT_ID } = process.env;
+const { roles } = require('./roles');
+
+const cliente = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 
-const apiKey = process.env.OPENAI_API_KEY;
+const apiKey = OPENAI_API_KEY;
 if (!apiKey) {
     throw new Error("Missing required environment variable: OPENAI_API_KEY");
 }
-const assistantId = process.env.ASSISTANT_ID;
+const assistantId = ASSISTANT_ID;
 if (!assistantId) {
     throw new Error("Missing required environment variable: ASSISTANT_ID");
 }
@@ -66,6 +69,7 @@ function splitMessage(message, maxLength) {
 
     return messages;
 }
+
 // Função para verificar tokens e atualizar se necessário
 async function checkAndUpdateUserTokens(userId, profileName) {
     try {
@@ -183,58 +187,181 @@ exports.receiveMessage = onRequest(async (req, res) => {
 
         // TODO: verificar se mensagem ultrapassa limite de tokens disponíveis
 
+        // Retorno padrão sem resposta para Webhook da Twilio
+        const twiml = new twilio.twiml.MessagingResponse();
+        res.writeHead(200, {'Content-Type': 'text/xml'});
+        res.end(twiml.toString());
+
+
+        // BACKGROUND AREA
+
         // Obter ou criar uma thread para o usuário
         const threadId = await getOrCreateThread(from);
         logger.info("Thread ID for user", { from, threadId });
+
+        // Logar todas as mensagens na thread
+        // const messages = await openai.beta.threads.messages.list(threadId);
+        // logger.info("All messages in the thread", { threadId, messages: messages.data });
 
         // Adicionar a mensagem ao thread
         await openai.beta.threads.messages.create(threadId, {
             role: "user",
             content: incomingMessage
         });
-        logger.info("Message added to thread", { threadId, message: incomingMessage });
 
-        // Logar todas as mensagens na thread
-        const messages = await openai.beta.threads.messages.list(threadId);
-        logger.info("All messages in the thread", { threadId, messages: messages.data });
+        let buffer = '';
+        const run = openai.beta.threads.runs
+            .stream(threadId, {
+                assistant_id: assistantId,
+                max_completion_tokens: process.env.MAX_COMPLETION_TOKENS | 8096,
+                max_prompt_tokens: process.env.MAX_PROMPT_TOKENS | 60000
+            })
+            .on('textCreated', (text) => console.log('\nassistant > '))
+            .on('textDelta', async (textDelta, snapshot) => {
+                buffer += textDelta.value;
+
+                if (buffer.length >= 500) {
+                    let mensagem = '';
+                    const temQuebra = buffer.lastIndexOf('\n\n') > 0;
+                    mensagem = buffer.substring(0, buffer.lastIndexOf(temQuebra ? '\n\n' : '. ') + ( temQuebra ? 2 : 1));
+                    buffer = buffer.substring(buffer.lastIndexOf(temQuebra ? '\n\n' : '. ') + ( temQuebra ? 2 : 1)).trimStart();
+
+                    await cliente.messages.create({
+                        from: req.body.To,
+                        to: req.body.From,
+                        body: mensagem
+                    });
+
+                }
+            })
+            .on('textDone', async (content, snapshot) => {
+
+                // TODO: nao mandar se buffer estiver vazio
+                await cliente.messages.create({
+                    from: req.body.To,
+                    to: req.body.From,
+                    body: buffer
+                });
+
+            })
+            .on('toolCallCreated', (toolCall) => console.log(`\nassistant > ${toolCall.type}\n\n`))
+            .on('toolCallDelta', (toolCallDelta, snapshot) => {
+                if (toolCallDelta.type === 'code_interpreter') {
+                    if (toolCallDelta.code_interpreter.input) {
+                        console.log(toolCallDelta.code_interpreter.input);
+                    }
+                    if (toolCallDelta.code_interpreter.outputs) {
+                        console.log('\noutput >\n');
+                        toolCallDelta.code_interpreter.outputs.forEach((output) => {
+                            if (output.type === 'logs') {
+                                console.log(`\n${output.logs}\n`);
+                            }
+                        });
+                    }
+                }
+            }
+        );
+
+        
+        // logger.info("Message added to thread", { threadId, message: incomingMessage });
+        // console.log();
+        // console.log();
+        // console.log('incomingMessage', incomingMessage);
+        // console.log();
+        // console.log();
+
 
         // Criar e fazer o poll da execução
-        const run = await openai.beta.threads.runs.createAndPoll(threadId, {
-            assistant_id: assistantId,
-            max_completion_tokens: process.env.MAX_COMPLETION_TOKENS | 8096,
-            max_prompt_tokens: process.env.MAX_PROMPT_TOKENS | 60000
+        // const run = await openai.beta.threads.runs.createAndStream(threadId, {
+        //     assistant_id: assistantId,
+        //     stream: true
+        // });
+
+        run.on('content', (delta, snapshot) => {
+            console.log();
+            console.log();
+            console.log();
+            console.log('STREAM STATUS: ', stream.status);
+            console.log('DELTA', delta);
+            console.log();
+            console.log();
+            console.log();
         });
+
         
-        logger.info("Run completed", { runId: run.id, status: run.status });
+        // logger.info("Run completed", { runId: run.id, status: run.status });
+        console.log("Run completed", { runId: run.id, status: run.status });
+        
+        /*
+        switch (run.status) {
+            //If we are in any sort of intermediate state we poll
+            case 'queued':
+            case 'in_progress':
+            case 'cancelling':
+              let sleepInterval = 5000;
+    
+              if (options?.pollIntervalMs) {
+                sleepInterval = options.pollIntervalMs;
+              } else {
+                const headerInterval = response.headers.get('openai-poll-after-ms');
+                if (headerInterval) {
+                  const headerIntervalMs = parseInt(headerInterval);
+                  if (!isNaN(headerIntervalMs)) {
+                    sleepInterval = headerIntervalMs;
+                  }
+                }
+              }
+              await sleep(sleepInterval);
+              break;
+            //We return the run in any terminal state.
+            case 'requires_action':
+            case 'incomplete':
+            case 'cancelled':
+            case 'completed':
+            case 'failed':
+            case 'expired':
+              return run;
+          }
+          */
 
-        // Verificar se a execução foi completada e obter a resposta
-        if (run.status === 'completed') {
-            const updatedMessages = await openai.beta.threads.messages.list(run.thread_id);
-            const assistantMessages = updatedMessages.data.filter(msg => msg.role === 'assistant');
-            const assistantMessage = assistantMessages.length > 0 ? assistantMessages[0].content[0].text.value : "No response from assistant.";
-            logger.info("Response from assistant", { response: assistantMessage });
 
-            console.log('\n\n\n');
-            logger.info("UPDATED MESSAGES", updatedMessages);
-            console.log('\n\n\n');
+        // // Verificar se a execução foi completada e obter a resposta
+        // if (run.status === 'completed') {
+        //     const updatedMessages = await openai.beta.threads.messages.list(run.thread_id);
+        //     const assistantMessages = updatedMessages.data.filter(msg => msg.role === 'assistant');
+        //     const assistantMessage = assistantMessages.length > 0 ? assistantMessages[0].content[0].text.value : "No response from assistant.";
+        //     logger.info("Response from assistant", { response: assistantMessage });
 
-            // Formatar a resposta para Twilio
-            const twiml = new twilio.twiml.MessagingResponse();
-            const responseMessages = splitMessage(assistantMessage, 1500);
+        //     console.log('\n\n\n');
+        //     logger.info("UPDATED MESSAGES", updatedMessages);
+        //     console.log('\n\n\n');
 
-            responseMessages.forEach(msg => twiml.message(msg));
+        //     // Formatar a resposta para Twilio
+        //     const twiml = new twilio.twiml.MessagingResponse();
+        //     const responseMessages = splitMessage(assistantMessage, 1500);
 
-            // Calcular tokens usados e atualizar tokens do usuário
-            // TODO: verificar se a resposta inclui total de tokens utilizados.
-            const tokensUsed = calculateTokens(incomingMessage) + calculateTokens(assistantMessage); //assistantMessage.length * 3; // Cálculo provisório de tokens
-            await updateUserTokens(userRef, tokensUsed);
+        //     await responseMessages.forEach(async msg => {
+        //         twiml.message(msg)
+        //         await cliente.messages.create({
+        //             from: TWILIO_FROM,
+        //             to: req.body.From,
+        //             body: msg
+        //         });
+        //     });
 
-            res.writeHead(200, {'Content-Type': 'text/xml'});
-            res.end(twiml.toString());
-        } else {
-            logger.error("Run did not complete successfully", { status: run.status });
-            res.status(500).send("Failed to get a response from assistant");
-        }
+
+        //     // Calcular tokens usados e atualizar tokens do usuário
+        //     // TODO: verificar se a resposta inclui total de tokens utilizados.
+        //     const tokensUsed = calculateTokens(incomingMessage) + calculateTokens(assistantMessage); //assistantMessage.length * 3; // Cálculo provisório de tokens
+        //     await updateUserTokens(userRef, tokensUsed);
+
+        // } else {
+        //     logger.error("Run did not complete successfully", { status: run.status });
+        //     res.status(500).send("Failed to get a response from assistant");
+        // }
+
+
+
     // } catch (error) {
     //     logger.error("Error processing message", { error: error.message });
     //     if (error.response) {
