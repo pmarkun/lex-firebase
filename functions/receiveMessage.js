@@ -210,10 +210,11 @@ exports.receiveMessage = onRequest(async (req, res) => {
         });
 
         let buffer = '';
-
         const run = openai.beta.threads.runs
             .stream(threadId, {
                 assistant_id: assistantId,
+                max_completion_tokens: process.env.MAX_COMPLETION_TOKENS | 8096,
+                max_prompt_tokens: process.env.MAX_PROMPT_TOKENS | 60000
             })
             .on('textCreated', (text) => console.log('\nassistant > '))
             .on('textDelta', async (textDelta, snapshot) => {
