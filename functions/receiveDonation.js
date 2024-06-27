@@ -119,10 +119,14 @@ exports.receiveDonation = onRequest(async (req, res) => {
             });
 
             // notificar WhatsApp sobre doação
+            const { TEMPLATE_DONATION_CONFIRMATION } = process.env;
+
             await cliente.messages.create({
                 from: TWILIO_FROM,
                 to: `whatsapp:${userId}`,
-                body: `Olá ${nome}!\n\nAcabamos de receber sua doação e agora você já pode conversar com a Lex!`
+                contentSid: TEMPLATE_DONATION_CONFIRMATION,
+                contentVariables: JSON.stringify({ 1: nome }),
+                // body: `Olá ${nome}!\n\nAcabamos de receber sua doação e agora você já pode conversar com a Lex!`
             });
             break;
     }
