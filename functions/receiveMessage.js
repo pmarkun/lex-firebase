@@ -276,16 +276,8 @@ exports.receiveMessage = onRequest(async (req, res) => {
 
             })
 
-
             .on('runStepCreated', async (runStep) => {
                 logger.info("runStepCreated:", JSON.stringify(runStep));
-
-                // await cliente.messages.create({
-                //     from: req.body.To,
-                //     to: req.body.From,
-                //     body: `Um momento por favor, estou fazendo uma pesquisa aqui...`
-                // });
-
             })
             .on('runStepDelta', async (delta, snapshot) => {
                 logger.info("runStepDelta:", JSON.stringify(delta));
