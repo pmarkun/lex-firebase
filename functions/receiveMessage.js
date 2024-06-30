@@ -6,26 +6,11 @@ const OpenAI = require('openai');
 const twilio = require('twilio');
 
 const tiktoken = require('tiktoken');
-const { limpaNumero, adicionaNove } = require('./util');
+const { limpaNumero, adicionaNove, downloadTwilioMedia } = require('./util');
 
 require('dotenv').config();
 const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM } = process.env;
-const { OPENAI_API_KEY, ASSISTANT_ID } = process.env;
 const { roles } = require('./roles');
-
-const cliente = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-
-
-const apiKey = OPENAI_API_KEY;
-if (!apiKey) {
-    throw new Error("Missing required environment variable: OPENAI_API_KEY");
-}
-const assistantId = ASSISTANT_ID;
-if (!assistantId) {
-    throw new Error("Missing required environment variable: ASSISTANT_ID");
-}
-
-const openai = new OpenAI({ apiKey });
 
 
 // Inicializa o Firebase Admin SDK
@@ -40,35 +25,48 @@ if (!admin.apps.length) {
 const db = getFirestore("lexai"); // Inicializa o Firestore
 
 
+const cliente = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+const { OPENAI_API_KEY, ASSISTANT_ID } = process.env;
+if (!OPENAI_API_KEY) {
+    throw new Error("Missing required environment variable: OPENAI_API_KEY");
+}
+if (!ASSISTANT_ID) {
+    throw new Error("Missing required environment variable: ASSISTANT_ID");
+}
+const openai = new OpenAI({ OPENAI_API_KEY });
+
+
+
 const calculateTokens = (text, encoding='') => {
     const tokensLength = tiktoken.encoding_for_model('gpt-4o').encode(text).length;
     logger.info('TOKENS', tokensLength);
     return tokensLength;
 }
 
-// Função para dividir a mensagem em partes menores
-function splitMessage(message, maxLength) {
-    const messages = [];
-    let startIndex = 0;
+// // Função para dividir a mensagem em partes menores
+// function splitMessage(message, maxLength) {
+//     const messages = [];
+//     let startIndex = 0;
 
-    while (startIndex < message.length) {
-        let endIndex = startIndex + maxLength;
+//     while (startIndex < message.length) {
+//         let endIndex = startIndex + maxLength;
 
-        if (endIndex < message.length) {
-            // Tentar encontrar o último ponto final antes do limite de comprimento
-            const lastPeriod = message.lastIndexOf('.', endIndex);
+//         if (endIndex < message.length) {
+//             // Tentar encontrar o último ponto final antes do limite de comprimento
+//             const lastPeriod = message.lastIndexOf('.', endIndex);
 
-            if (lastPeriod > startIndex) {
-                endIndex = lastPeriod + 1; // Inclui o ponto final
-            }
-        }
+//             if (lastPeriod > startIndex) {
+//                 endIndex = lastPeriod + 1; // Inclui o ponto final
+//             }
+//         }
 
-        messages.push(message.substring(startIndex, endIndex).trim());
-        startIndex = endIndex;
-    }
+//         messages.push(message.substring(startIndex, endIndex).trim());
+//         startIndex = endIndex;
+//     }
 
-    return messages;
-}
+//     return messages;
+// }
 
 // Função para verificar tokens e atualizar se necessário
 async function checkAndUpdateUserTokens(userId, profileName) {
@@ -133,14 +131,27 @@ async function getOrCreateThread(userId) {
         logger.info("User document fetched", { exists: userDoc.exists });
 
         if (userDoc.exists && userDoc.data().threadId) {
-            // TODO: se a thread tiver mais de 24 horas é interessante criar uma outra!
             const threadId = userDoc.data().threadId;
+
+            // TODO: se a thread tiver mais de 24 horas é interessante criar uma outra!
+            userRef.collection('logs').doc(threadId).update({
+                updatedAt: FieldValue.serverTimestamp(),
+                count: FieldValue.increment(1)
+            })
+
             if (threadId) {
                 return threadId;
             }
         } else {
             const thread = await openai.beta.threads.create();
+            logger.info('create thread...', thread);
             await userRef.update({ threadId: thread.id });
+            userRef.collection('logs').doc(thread.id).create({
+                type: 'openai',
+                createdAt: FieldValue.serverTimestamp(),
+                count: 1,
+                thread
+            })
             logger.info("New thread created for user", { userId, threadId: thread.id });
             return thread.id;
         }
@@ -154,7 +165,8 @@ async function getOrCreateThread(userId) {
 
 exports.receiveMessage = onRequest(async (req, res) => {
     // try {
-        const incomingMessage = req.body.Body;
+        let incomingMessage = req.body.Body;
+        const hasAudio = req.body.MessageType == 'audio';
         const from = adicionaNove(limpaNumero(req.body.From)); // O número de telefone do remetente
         const profileName = req.body.ProfileName;
 
@@ -193,30 +205,79 @@ exports.receiveMessage = onRequest(async (req, res) => {
         res.end(twiml.toString());
 
 
+
+
+
         // BACKGROUND AREA
+
+            // // Logar todas as mensagens na thread
+            // const messages = await openai.beta.threads.messages.list(threadId);
+            // logger.info("All messages in the thread", { threadId, messages: messages.data });
+
+        if (hasAudio) {
+            const audioUrl = req.body.MediaUrl0;
+            const audioContentType = req.body.MediaContentType0;
+            logger.info('DOWNLOAD MEDIA', { url: req.body.MediaUrl0, MessageType: req.body.MessageType, ContentType: req.body.MediaContentType0 });
+            let audioBuffer = await downloadTwilioMedia(audioUrl);
+
+            logger.info(`MEDIA SIZE: ${audioBuffer.buffer.length}`);
+
+            if (audioBuffer.buffer.length > 30000) {
+                await cliente.messages.create({
+                    from: req.body.To,
+                    to: req.body.From,
+                    body: `Só um momento. Estou escutando seu áudio...`
+                });
+
+            }
+
+            const transcription = await openai.audio.transcriptions.create({
+                file: await OpenAI.toFile(audioBuffer.buffer, `audio.${audioContentType.split('/').pop()}`),
+                model: 'whisper-1'
+                // language: "de", // this is optional but helps the model
+            });
+
+            logger.info('TRANSCRIPTION', transcription);
+            // console.log(transcription.text);
+            incomingMessage = transcription.text;
+
+            // TODO: se audio for grande, enviar mensagem de espera
+        }
+
+
+            
+
 
         // Obter ou criar uma thread para o usuário
         const threadId = await getOrCreateThread(from);
         logger.info("Thread ID for user", { from, threadId });
 
-        // Logar todas as mensagens na thread
-        // const messages = await openai.beta.threads.messages.list(threadId);
-        // logger.info("All messages in the thread", { threadId, messages: messages.data });
+        // TODO: incluir informações de total de doações, data atual e o que for necessário
+        // await openai.beta.threads.messages.create(threadId, {
+        //    role: "system",
+        //    content: ""
+        // });
 
         // Adicionar a mensagem ao thread
-        await openai.beta.threads.messages.create(threadId, {
+        let userMessage = {
             role: "user",
             content: incomingMessage
+        }
+        await openai.beta.threads.messages.create(threadId, userMessage);
+        await userRef.collection('logs').doc(threadId).collection('messages').add({
+            ...userMessage,
+            createdAt: FieldValue.serverTimestamp()
         });
 
         let buffer = '';
         const run = openai.beta.threads.runs
             .stream(threadId, {
-                assistant_id: assistantId,
+                assistant_id: ASSISTANT_ID,
                 max_completion_tokens: process.env.MAX_COMPLETION_TOKENS | 8096,
                 max_prompt_tokens: process.env.MAX_PROMPT_TOKENS | 60000
             })
-            .on('textCreated', (text) => console.log('\nassistant > '))
+            .on('textCreated', async (text) => {
+            })
             .on('textDelta', async (textDelta, snapshot) => {
                 buffer += textDelta.value;
 
@@ -234,18 +295,48 @@ exports.receiveMessage = onRequest(async (req, res) => {
 
                 }
             })
-            .on('textDone', async (content, snapshot) => {
+            .on('textDone', async (text, snapshot) => {
+                if (buffer.length !== 0) {
+                    // Nao mandar se buffer estiver vazio
+                    await cliente.messages.create({
+                        from: req.body.To,
+                        to: req.body.From,
+                        body: buffer
+                    });
+                }
 
-                // TODO: nao mandar se buffer estiver vazio
-                await cliente.messages.create({
-                    from: req.body.To,
-                    to: req.body.From,
-                    body: buffer
+                await userRef.collection('logs').doc(threadId).collection('messages').add({
+                    createdAt: FieldValue.serverTimestamp(),
+                    role: 'assistant',
+                    ...text
                 });
 
             })
-            .on('toolCallCreated', (toolCall) => console.log(`\nassistant > ${toolCall.type}\n\n`))
-            .on('toolCallDelta', (toolCallDelta, snapshot) => {
+
+            .on('runStepCreated', async (runStep) => {
+                logger.info("runStepCreated:", JSON.stringify(runStep));
+            })
+            .on('runStepDelta', async (delta, snapshot) => {
+                logger.info("runStepDelta:", JSON.stringify(delta));
+            })
+            .on('runStepDone', async (runStep, snapshot) => {
+                logger.info("runStepDone:", JSON.stringify(runStep));
+            })
+
+
+            .on('toolCallCreated', async (toolCall) => {
+                console.log(`\nassistant > ${toolCall.type}\n\n`);
+                logger.info('TOOL CALL CREATED', toolCall);
+
+                await cliente.messages.create({
+                    from: req.body.To,
+                    to: req.body.From,
+                    body: `Um momento, pois preciso consultar meus arquivos...`
+                });
+
+            })
+            .on('toolCallDelta', async (toolCallDelta, snapshot) => {
+                logger.info('TOOL CALL DELTA', toolCallDelta);
                 if (toolCallDelta.type === 'code_interpreter') {
                     if (toolCallDelta.code_interpreter.input) {
                         console.log(toolCallDelta.code_interpreter.input);
@@ -259,6 +350,13 @@ exports.receiveMessage = onRequest(async (req, res) => {
                         });
                     }
                 }
+            }).on('toolCallDone', (toolCall) => {
+                logger.info('TOOL CALL DONE', toolCall);
+                // console.log("toolCallDone:", JSON.stringify(toolCall));
+                // toolChangedLast = true;
+            }).on('end', async () => {
+                console.log("end event");
+                // res.end(); // Close the request
             }
         );
 
@@ -276,21 +374,9 @@ exports.receiveMessage = onRequest(async (req, res) => {
         //     assistant_id: assistantId,
         //     stream: true
         // });
-
-        run.on('content', (delta, snapshot) => {
-            console.log();
-            console.log();
-            console.log();
-            console.log('STREAM STATUS: ', stream.status);
-            console.log('DELTA', delta);
-            console.log();
-            console.log();
-            console.log();
-        });
-
         
-        // logger.info("Run completed", { runId: run.id, status: run.status });
-        console.log("Run completed", { runId: run.id, status: run.status });
+        logger.info("Run completed", { runId: run.id, status: run.status });
+        // console.log("Run completed", { runId: run.id, status: run.status });
         
         /*
         switch (run.status) {

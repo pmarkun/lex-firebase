@@ -100,29 +100,33 @@ exports.receiveDonation = onRequest(async (req, res) => {
             //     body: `Recebemos um pedido de doação em nome de ${nome}.\n\nAssim que confirmado liberaremos o uso da Lex!`
             // })
 
-            await db.collection('users').doc(userId).update({
+            await db.collection('users').doc(userId).set({
                 fullName: dados.donor_name,
                 role: !user.role ? roles.guest : user.role,
                 "donations.intents": FieldValue.increment(1),
                 updatedAt: FieldValue.serverTimestamp(),
-            });
+            }, { merge: true });
             break;
 
         case 'donation_captured': 
             // definir role como user caso seja guest
-            await db.collection('users').doc(userId).update({
+            await db.collection('users').doc(userId).set({
                 fullName: dados.donor_name,
                 role: !user.role || user.role === roles.guest ? roles.user : user.role,
                 maxTokens: FieldValue.increment(parseInt(DONOR_TOKENS)),
                 updatedAt: FieldValue.serverTimestamp(),
                 "donations.completed": FieldValue.increment(1)
-            });
+            }, { merge: true });
 
             // notificar WhatsApp sobre doação
+            const { TEMPLATE_DONATION_CONFIRMATION } = process.env;
+
             await cliente.messages.create({
                 from: TWILIO_FROM,
                 to: `whatsapp:${userId}`,
-                body: `Olá ${nome}!\n\nAcabamos de receber sua doação e agora você já pode conversar com a Lex!`
+                contentSid: TEMPLATE_DONATION_CONFIRMATION,
+                contentVariables: JSON.stringify({ 1: nome }),
+                // body: `Olá ${nome}!\n\nAcabamos de receber sua doação e agora você já pode conversar com a Lex!`
             });
             break;
     }
