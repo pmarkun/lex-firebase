@@ -78,3 +78,54 @@ exports.replaceVariablesTemplateMessage = (message, data) => {
     });
     return message;
 }
+
+
+
+// Função auxiliar para baixar arquivo do Twilio (necessário pela autenticação)
+exports.downloadTwilioMediaBase64 = async (mediaUrl) => {
+    const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN } = process.env;
+
+    const axios = require('axios'); // Para chamadas HTTP
+    return await axios
+        .get(mediaUrl, {
+            responseType: 'arraybuffer',
+            auth: {
+                username: TWILIO_ACCOUNT_SID,
+                password: TWILIO_AUTH_TOKEN
+            }
+        })
+        .then(response => {
+            const result = {
+                contentType: response.headers['content-type'],
+                base64: Buffer.from(response.data, 'binary').toString('base64')
+            }
+            return result;
+        }).catch(e => {
+            console.error('ERROR!', e);
+            return null;
+        });
+}
+
+exports.downloadTwilioMedia = async (mediaUrl) => {
+    const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN } = process.env;
+
+    const axios = require('axios'); // Para chamadas HTTP
+    return await axios
+        .get(mediaUrl, {
+            responseType: 'arraybuffer',
+            auth: {
+                username: TWILIO_ACCOUNT_SID,
+                password: TWILIO_AUTH_TOKEN
+            }
+        })
+        .then(response => {
+            const result = {
+                contentType: response.headers['content-type'],
+                buffer: Buffer.from(response.data, 'binary')
+            }
+            return result;
+        }).catch(e => {
+            console.error('ERROR!', e);
+            return null;
+        });
+}

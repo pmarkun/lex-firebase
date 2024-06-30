@@ -6,7 +6,7 @@ const OpenAI = require('openai');
 const twilio = require('twilio');
 
 const tiktoken = require('tiktoken');
-const { limpaNumero, adicionaNove } = require('./util');
+const { limpaNumero, adicionaNove, downloadTwilioMedia } = require('./util');
 
 require('dotenv').config();
 const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM } = process.env;
@@ -165,7 +165,8 @@ async function getOrCreateThread(userId) {
 
 exports.receiveMessage = onRequest(async (req, res) => {
     // try {
-        const incomingMessage = req.body.Body;
+        let incomingMessage = req.body.Body;
+        const hasAudio = req.body.MessageType == 'audio';
         const from = adicionaNove(limpaNumero(req.body.From)); // O número de telefone do remetente
         const profileName = req.body.ProfileName;
 
@@ -204,11 +205,47 @@ exports.receiveMessage = onRequest(async (req, res) => {
         res.end(twiml.toString());
 
 
+
+
+
         // BACKGROUND AREA
 
             // // Logar todas as mensagens na thread
             // const messages = await openai.beta.threads.messages.list(threadId);
             // logger.info("All messages in the thread", { threadId, messages: messages.data });
+
+        if (hasAudio) {
+            const audioUrl = req.body.MediaUrl0;
+            const audioContentType = req.body.MediaContentType0;
+            logger.info('DOWNLOAD MEDIA', { url: req.body.MediaUrl0, MessageType: req.body.MessageType, ContentType: req.body.MediaContentType0 });
+            let audioBuffer = await downloadTwilioMedia(audioUrl);
+
+            logger.info(`MEDIA SIZE: ${audioBuffer.buffer.length}`);
+
+            if (audioBuffer.buffer.length > 30000) {
+                await cliente.messages.create({
+                    from: req.body.To,
+                    to: req.body.From,
+                    body: `Só um momento. Estou escutando seu áudio...`
+                });
+
+            }
+
+            const transcription = await openai.audio.transcriptions.create({
+                file: await OpenAI.toFile(audioBuffer.buffer, `audio.${audioContentType.split('/').pop()}`),
+                model: 'whisper-1'
+                // language: "de", // this is optional but helps the model
+            });
+
+            logger.info('TRANSCRIPTION', transcription);
+            // console.log(transcription.text);
+            incomingMessage = transcription.text;
+
+            // TODO: se audio for grande, enviar mensagem de espera
+        }
+
+
+            
 
 
         // Obter ou criar uma thread para o usuário
