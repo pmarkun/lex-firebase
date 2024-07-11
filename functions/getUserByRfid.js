@@ -17,14 +17,30 @@ if (!admin.apps.length) {
 const db = getFirestore("lexai"); // Inicializa o Firestore
 
 
-exports.getUserByRfid = onCall(
-    { cors: [/lex\.tec\.br$/, "https://flutter.com"] },
-    (request) => {
+exports.getUserByRfid = onRequest(
+    //{ cors: [/lex\.tec\.br$/, "https://flutter.com"] },
+    { cors: true },
 
-        return {
-            teste: true,
-            mensagem: 'Olá mundo!'
-        };
+    async (request, res) => {
+        console.log(request.body)
+        let rfid = request.body.rfid;
+        try {
+            const querySnapshot = await db.collection('users').where('rfid', '==', rfid).get();
+            if (!querySnapshot.empty) {
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    res.end(JSON.stringify(data));
+                    //return profileName;
 
-    }
+                });
+            } else {
+                res.end(JSON.stringify({"profileName" : ""}));
+                //return null;
+            }
+        } catch (error) {
+            res.end(JSON.stringify({"error" : error}));
+            console.error("Error checking Firebase: ", error);
+            //return null;
+            }
+        }
 );
