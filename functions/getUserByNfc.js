@@ -17,7 +17,7 @@ if (!admin.apps.length) {
 const db = getFirestore("lexai"); // Inicializa o Firestore
 
 
-exports.getUserByRfid = onRequest(
+exports.getUserByNfc = onRequest(
     //{ cors: [/lex\.tec\.br$/, "https://flutter.com"] },
     { cors: true },
 
