@@ -23,20 +23,27 @@ exports.getUserByNfc = onRequest(
 
     async (request, res) => {
         console.log(request.body)
-        let rfid = request.body.rfid;
+        let nfcId = request.body.id;
         try {
-            const querySnapshot = await db.collection('users').where('rfid', '==', rfid).get();
-            if (!querySnapshot.empty) {
-                querySnapshot.forEach((doc) => {
-                    const data = doc.data();
-                    res.end(JSON.stringify(data));
-                    //return profileName;
+            await db.collection('tokens').doc(nfcId).get().then(s => {
+                if (s.exists) {
+                    return res.end(JSON.stringify(s.data()));
+                }
+                res.end(JSON.stringify({"firstName" : ""}));
+            });
 
-                });
-            } else {
-                res.end(JSON.stringify({"profileName" : ""}));
-                //return null;
-            }
+            // const querySnapshot = await db.collection('users').where('rfid', '==', rfid).get();
+            // if (!querySnapshot.empty) {
+            //     querySnapshot.forEach((doc) => {
+            //         const data = doc.data();
+                    
+            //         //return profileName;
+
+            //     });
+            // } else {
+            //     res.end(JSON.stringify({"firstName" : ""}));
+            //     //return null;
+            // }
         } catch (error) {
             res.end(JSON.stringify({"error" : error}));
             console.error("Error checking Firebase: ", error);

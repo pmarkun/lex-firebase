@@ -20,11 +20,11 @@ const db = getFirestore("lexai"); // Inicializa o Firestore
 exports.updateNfc = onRequest(
    async (req, res) => {
         console.log('REQ', req.body);
-        const { hashId, firstName } = req.body;
+        const { hashID, firstName, phoneNumber } = req.body;
 
         // TODO: regex hashID MD5 pattern
-        if (!hashId) {
-            logger.error('NO HASH ID ', hashId);
+        if (!hashID) {
+            logger.error('NO HASH ID ', hashID);
             return res.end("ERR");
         }
 
@@ -33,7 +33,7 @@ exports.updateNfc = onRequest(
             return res.end("ERR");
         }
 
-        await db.collection('tokens').doc(hashId).set({
+        await db.collection('tokens').doc(hashID).set({
             firstName,
             updatedAt: FieldValue.serverTimestamp(),
         }, { merge: true });
