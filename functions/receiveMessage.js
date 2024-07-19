@@ -7,13 +7,15 @@ const ThreadManager = require('./ThreadManager');
 const LangChainHandler = require('./handlers/LangChainHandler'); // Atualizado para caminho correto
 const { roles } = require('./roles');
 const { FieldValue } = require('firebase-admin/firestore'); // Importando FieldValue
-const { loadTemplate } = require('./util');
+const { loadTemplate, transcribeAudio } = require('./util');
+const MessageSender = require('./messageSender');
 
 const cliente = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const userTokenManager = new UserTokenManager();
 const threadManager = new ThreadManager();
 const langChainHandler = new LangChainHandler();
+const messageSender = new MessageSender();
 
 exports.receiveMessage = onRequest(async (req, res) => {
     let incomingMessage = req.body.Body;
@@ -49,20 +51,14 @@ exports.receiveMessage = onRequest(async (req, res) => {
 
     if (hasAudio) {
         const audioUrl = req.body.MediaUrl0;
-        const audioContentType = req.body.MediaContentType0;
+        //const audioContentType = req.body.MediaContentType0;
         logger.info('DOWNLOAD MEDIA', { url: req.body.MediaUrl0, MessageType: req.body.MessageType, ContentType: req.body.MediaContentType0 });
-
-        let audioBuffer = await downloadTwilioMedia(audioUrl);
-
-        if (audioBuffer.buffer.length > 30000) {
-            await cliente.messages.create({
-                from: req.body.To,
-                to: req.body.From,
-                body: loadTemplate('audioTranscribe', {})
-            });
+        let { contentType, buffer } = await downloadTwilioMedia(audioUrl);
+        if (buffer.length > 10000) {
+            await messageSender.sendMessage(req.body.To, req.body.From, loadTemplate('audioTranscribe', {}));
         }
 
-        const transcription = await langChainHandler.transcribeAudio(audioBuffer, audioContentType);
+        const transcription = await transcribeAudio(buffer, contentType);
         incomingMessage = transcription.text;
     }
 

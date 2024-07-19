@@ -11,6 +11,10 @@ class MessageSender {
 
     async sendMessage(from, to, responseStream) {
         let fullResponse = ''; // To collect the full response
+        if (typeof responseStream === 'string') {
+            responseStream = [{ content: responseStream }];
+        }
+
         for await (const chunk of responseStream) {
             fullResponse += chunk.content;
             this.buffer += chunk.content;

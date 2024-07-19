@@ -2,6 +2,10 @@
 const fs = require('fs');
 const path = require('path');
 const handlebars = require('handlebars');
+const OpenAI = require('openai');
+require('dotenv').config();
+const { OPENAI_API_KEY } = process.env;
+const openai = new OpenAI();
 
 exports.loadTemplate = function(templateName, context) {
     const templatePath = path.join(__dirname, 'templates', `${templateName}.hbs`);
@@ -91,6 +95,13 @@ exports.replaceVariablesTemplateMessage = (message, data) => {
 }
 
 
+//Função auxiliar para transcrever áudio (TODO: mudar para local)
+exports.transcribeAudio = async (audioBuffer, audioContentType) => {
+    return await openai.audio.transcriptions.create({
+        file: await OpenAI.toFile(audioBuffer, `audio.${audioContentType.split('/').pop()}`),
+        model: 'whisper-1'
+    });
+}
 
 // Função auxiliar para baixar arquivo do Twilio (necessário pela autenticação)
 exports.downloadTwilioMediaBase64 = async (mediaUrl) => {
