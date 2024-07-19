@@ -1,28 +1,25 @@
 const { FieldValue } = require('firebase-admin/firestore');
-const db = require('../firebase');
 const logger = require("firebase-functions/logger");
-const { loadTemplate } = require("../util");
+const db = require('../firebase');
+const { loadTemplate } = require('../util');
 const { ChatOpenAI } = require("@langchain/openai");
-const { SystemMessage } = require("@langchain/core/messages");
+const { SystemMessage, HumanMessage, AIMessage } = require("@langchain/core/messages");
 
 class MemoryHandler {
     constructor() {
         this.db = db;
         this.model = new ChatOpenAI({
             apiKey: process.env.OPENAI_API_KEY,
-            model: "gpt-3.5-turbo",
+            model: "gpt-4o-mini",
             temperature: 0
         });
     }
 
-    async getLastNMessages(sessionId, n, since = null) {
+    async getMessagesSinceLastSummary(sessionId, lastSummaryDate = null) {
         try {
             let messagesRef = this.db.collection('sessions').doc(sessionId).collection('messages').orderBy('createdAt', 'desc');
-            if (since) {
-                messagesRef = messagesRef.where('createdAt', '>', since);
-            }
-            if (n) {
-                messagesRef = messagesRef.limit(n);
+            if (lastSummaryDate) {
+                messagesRef = messagesRef.where('createdAt', '>', lastSummaryDate);
             }
             const snapshot = await messagesRef.get();
             const messages = [];
@@ -31,8 +28,8 @@ class MemoryHandler {
             });
             return messages.reverse(); // Reverse to maintain chronological order
         } catch (error) {
-            logger.error('Error loading messages', error);
-            throw new Error('Error loading messages');
+            logger.error('Error loading messages since last summary', error);
+            throw new Error('Error loading messages since last summary');
         }
     }
 
@@ -55,17 +52,15 @@ class MemoryHandler {
 
     async summarizeMessages(sessionId) {
         try {
-            const lastSummary = await this.loadSummary(sessionId);
-            const lastSummaryDate = lastSummary ? lastSummary.updatedAt : null;
-            const newMessages = await this.getLastNMessages(sessionId, null, lastSummaryDate);
+            const lastSummaryDate = await this.getLastSummaryDate(sessionId);
+            const messages = await this.getMessagesSinceLastSummary(sessionId, lastSummaryDate);
+            const messagesContent = messages.map(msg => `${msg.role === 'human' ? 'Human' : 'AI'}: ${msg.content}`).join('\n');
+            const summaryPrompt = loadTemplate('summary', { messages: messagesContent });
 
-            const combinedMessages = [
-                lastSummary ? `Previous summary: ${lastSummary.summary}` : '',
-                ...newMessages.map(msg => `${msg.role === 'human' ? 'User' : 'AI'}: ${msg.content}`)
-            ].join('\n');
-
-            const prompt = loadTemplate('summary', { combinedMessages });
-            const response = await this.model.invoke([{ role: 'system', content: prompt }]);
+            const response = await this.model.invoke([
+                new SystemMessage({ content: summaryPrompt }),
+                new HumanMessage({ content: messagesContent })
+            ]);
 
             return response.content;
         } catch (error) {
@@ -96,6 +91,19 @@ class MemoryHandler {
         } catch (error) {
             logger.error('Error loading summary from Firestore', error);
             throw new Error('Error loading summary from Firestore');
+        }
+    }
+
+    async getLastSummaryDate(sessionId) {
+        try {
+            const doc = await this.db.collection('sessions').doc(sessionId).get();
+            if (doc.exists) {
+                return doc.data().updatedAt || null;
+            }
+            return null;
+        } catch (error) {
+            logger.error('Error getting last summary date from Firestore', error);
+            throw new Error('Error getting last summary date from Firestore');
         }
     }
 }

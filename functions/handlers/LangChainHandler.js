@@ -2,9 +2,9 @@ const { InMemoryChatMessageHistory } = require("@langchain/core/chat_history");
 const { ChatPromptTemplate } = require("@langchain/core/prompts");
 const { RunnableWithMessageHistory } = require("@langchain/core/runnables");
 const { ChatOpenAI } = require("@langchain/openai");
-const { HumanMessage, AIMessage, SystemMessage } = require("@langchain/core/messages");
-const twilio = require('twilio');
+const { HumanMessage, AIMessage } = require("@langchain/core/messages");
 const MemoryHandler = require('./memoryHandler');
+const MessageSender = require('../messageSender');
 const logger = require("firebase-functions/logger");
 const { loadTemplate } = require("../util");
 
@@ -14,7 +14,7 @@ class LangChainHandler {
     constructor() {
         this.model = new ChatOpenAI({
             apiKey: process.env.OPENAI_API_KEY,
-            model: "gpt-3.5-turbo",
+            model: "gpt-4o-mini",
             temperature: 0
         });
 
@@ -31,15 +31,11 @@ class LangChainHandler {
             getMessageHistory: async (sessionId) => {
                 if (!messageHistories[sessionId]) {
                     messageHistories[sessionId] = new InMemoryChatMessageHistory();
-                    
                     const lastSummary = await this.memoryHandler.loadSummary(sessionId);
+                    const lastMessages = await this.memoryHandler.getMessagesSinceLastSummary(sessionId);
                     if (lastSummary) {
-                        await messageHistories[sessionId].addMessages([
-                            new SystemMessage({ content: lastSummary })
-                        ]);
+                        await messageHistories[sessionId].addMessages([new AIMessage({ content: lastSummary })]);
                     }
-                    
-                    const lastMessages = await this.memoryHandler.getLastNMessages(sessionId, 10);
                     await messageHistories[sessionId].addMessages(lastMessages.map(msg => {
                         if (msg.role === 'human') {
                             return new HumanMessage({ content: msg.content });
@@ -55,7 +51,7 @@ class LangChainHandler {
         });
 
         this.memoryHandler = new MemoryHandler();
-        this.cliente = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+        this.messageSender = new MessageSender();
     }
 
     async processResponse(threadId, userRef, twilioFrom, twilioTo, inputMessage) {
@@ -69,36 +65,28 @@ class LangChainHandler {
         const inputs = { input: inputMessage };
 
         logger.info('Processing input', { inputs });
-        const response = await this.withMessageHistory.invoke(inputs, config);
+        const responseStream = await this.withMessageHistory.stream(inputs, config);
 
-        logger.info('Response received', { response });
+        // Send message via stream and collect full response
+        const fullResponse = await this.messageSender.sendMessage(twilioFrom, twilioTo, responseStream);
+
+        logger.info('Response sent via stream');
 
         const chatHistory = await this.withMessageHistory.getMessageHistory(sessionId);
 
         await chatHistory.addMessages([
             new HumanMessage({ content: inputMessage }),
-            new AIMessage({ content: response.content }),
+            new AIMessage({ content: fullResponse })
         ]);
 
         logger.info('Memory saved', chatHistory);
 
-        const finalMessage = response.content;
-        logger.info('Sending final message', { finalMessage, twilioFrom, twilioTo });
-
-        const responseTwilio = await this.cliente.messages.create({
-            from: twilioFrom,
-            to: twilioTo,
-            body: finalMessage
-        });
-
-        logger.info('Final message sent', { finalMessage, responseTwilio });
-
         await this.memoryHandler.addMessages(sessionId, [
             { role: 'human', content: inputMessage },
-            { role: 'ai', content: finalMessage }
+            { role: 'ai', content: fullResponse }
         ]);
 
-        logger.info('Message logged', { finalMessage });
+        logger.info('Message logged');
     }
 
     async summarizeAndSaveMessages(threadId) {
