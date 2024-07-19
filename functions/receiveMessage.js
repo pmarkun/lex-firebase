@@ -36,11 +36,8 @@ exports.receiveMessage = onRequest(async (req, res) => {
         default:
             logger.info('Role is Guest or User');
             if (maxTokens === 0) {
-                const welcomeMessage = loadTemplate('welcome', {});
                 const twiml = new twilio.twiml.MessagingResponse();
-                twiml.message(welcomeMessage);
-
-                res.writeHead(200, { 'Content-Type': 'text/xml' });
+                twiml.message(await loadTemplate('welcome', {}));
                 return res.end(twiml.toString());
             }
             break;
@@ -54,35 +51,23 @@ exports.receiveMessage = onRequest(async (req, res) => {
         const audioUrl = req.body.MediaUrl0;
         const audioContentType = req.body.MediaContentType0;
         logger.info('DOWNLOAD MEDIA', { url: req.body.MediaUrl0, MessageType: req.body.MessageType, ContentType: req.body.MediaContentType0 });
-        let audioBuffer = await downloadTwilioMedia(audioUrl);
 
-        logger.info(`MEDIA SIZE: ${audioBuffer.buffer.length}`);
+        let audioBuffer = await downloadTwilioMedia(audioUrl);
 
         if (audioBuffer.buffer.length > 30000) {
             await cliente.messages.create({
                 from: req.body.To,
                 to: req.body.From,
-                body: `Só um momento. Estou escutando seu áudio...`
+                body: loadTemplate('audioTranscribe', {})
             });
         }
 
-        const transcription = await langChainHandler.transcribeAudio(audioBuffer.buffer, audioContentType);
-        logger.info('TRANSCRIPTION', transcription);
+        const transcription = await langChainHandler.transcribeAudio(audioBuffer, audioContentType);
         incomingMessage = transcription.text;
     }
 
     const threadId = await threadManager.getOrCreateThread(from);
     logger.info("Thread ID for user", { from, threadId });
-
-    let userMessage = {
-        role: "user",
-        content: incomingMessage
-    }
-    await langChainHandler.createMessage(threadId, userMessage);
-    await userRef.collection('logs').doc(threadId).collection('messages').add({
-        ...userMessage,
-        createdAt: FieldValue.serverTimestamp()
-    });
 
     await langChainHandler.processResponse(threadId, userRef, req.body.To, req.body.From, incomingMessage);
 });

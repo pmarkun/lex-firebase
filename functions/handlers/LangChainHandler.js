@@ -2,11 +2,11 @@ const { InMemoryChatMessageHistory } = require("@langchain/core/chat_history");
 const { ChatPromptTemplate } = require("@langchain/core/prompts");
 const { RunnableWithMessageHistory } = require("@langchain/core/runnables");
 const { ChatOpenAI } = require("@langchain/openai");
-const { HumanMessage, AIMessage } = require("@langchain/core/messages");
-const { FieldValue } = require('firebase-admin/firestore');
-const logger = require("firebase-functions/logger");
+const { HumanMessage, AIMessage, SystemMessage } = require("@langchain/core/messages");
 const twilio = require('twilio');
-const { loadTemplate } = require('../util');
+const MemoryHandler = require('./memoryHandler');
+const logger = require("firebase-functions/logger");
+const { loadTemplate } = require("../util");
 
 const messageHistories = {};
 
@@ -19,7 +19,7 @@ class LangChainHandler {
         });
 
         this.prompt = ChatPromptTemplate.fromMessages([
-            ["system", "You are a helpful assistant who remembers all details the user shares with you."],
+            ["system", loadTemplate('default', {})],
             ["placeholder", "{chat_history}"],
             ["human", "{input}"],
         ]);
@@ -31,6 +31,22 @@ class LangChainHandler {
             getMessageHistory: async (sessionId) => {
                 if (!messageHistories[sessionId]) {
                     messageHistories[sessionId] = new InMemoryChatMessageHistory();
+                    
+                    const lastSummary = await this.memoryHandler.loadSummary(sessionId);
+                    if (lastSummary) {
+                        await messageHistories[sessionId].addMessages([
+                            new SystemMessage({ content: lastSummary })
+                        ]);
+                    }
+                    
+                    const lastMessages = await this.memoryHandler.getLastNMessages(sessionId, 10);
+                    await messageHistories[sessionId].addMessages(lastMessages.map(msg => {
+                        if (msg.role === 'human') {
+                            return new HumanMessage({ content: msg.content });
+                        } else {
+                            return new AIMessage({ content: msg.content });
+                        }
+                    }));
                 }
                 return messageHistories[sessionId];
             },
@@ -38,15 +54,8 @@ class LangChainHandler {
             historyMessagesKey: "chat_history",
         });
 
+        this.memoryHandler = new MemoryHandler();
         this.cliente = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-    }
-
-    async transcribeAudio(audioBuffer, audioContentType) {
-        // Implementação da transcrição, se necessário
-    }
-
-    async createMessage(threadId, userMessage) {
-        // Implementação da criação de mensagem, se necessário
     }
 
     async processResponse(threadId, userRef, twilioFrom, twilioTo, inputMessage) {
@@ -84,12 +93,18 @@ class LangChainHandler {
 
         logger.info('Final message sent', { finalMessage, responseTwilio });
 
-        await userRef.collection('logs').doc(threadId).collection('messages').add({
-            createdAt: FieldValue.serverTimestamp(),
-            role: 'assistant',
-            content: finalMessage
-        });
+        await this.memoryHandler.addMessages(sessionId, [
+            { role: 'human', content: inputMessage },
+            { role: 'ai', content: finalMessage }
+        ]);
+
         logger.info('Message logged', { finalMessage });
+    }
+
+    async summarizeAndSaveMessages(threadId) {
+        const sessionId = threadId;
+        const summary = await this.memoryHandler.summarizeMessages(sessionId);
+        await this.memoryHandler.saveSummary(sessionId, summary);
     }
 }
 
