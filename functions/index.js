@@ -6,5 +6,7 @@ exports.syncLog = require('./syncLog').syncLog;
 exports.callLog = require('./callLog').callLog;
 exports.getUserByNfc = require('./getUserByNfc').getUserByNfc;
 exports.updateNfc = require('./updateNfc').updateNfc;
+exports.enableLex = require('./enableLex').enableLex;
+
 
 
