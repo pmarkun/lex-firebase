@@ -20,12 +20,48 @@ const messageSender = new MessageSender();
 exports.receiveMessage = onRequest(async (req, res) => {
     let incomingMessage = req.body.Body;
     const hasAudio = req.body.MessageType == 'audio';
+    const hasImage = req.body.MessageType == 'image';
     const from = adicionaNove(limpaNumero(req.body.From));
     const profileName = req.body.ProfileName;
 
     logger.info("Incoming message received", { message: incomingMessage, from, profileName });
 
+    const twiml = new twilio.twiml.MessagingResponse();
     const { currentTokens, maxTokens, userRef, role } = await userTokenManager.checkAndUpdateUserTokens(from, profileName);
+
+
+    // Envio de conteúdo por palavra-chave
+    switch (incomingMessage.toUpperCase().trim()) {
+        case 'FOTO':
+            let photoData = await db.collection('settings').doc('photo').get()
+                .then(s => {
+                    if (s.exists) {
+                        return s.data();
+                    }
+                    return null
+                });
+            
+            if (photoData && photoData.active) {
+                // await cliente.messages.create({
+                //     from: req.body.To,
+                //     to: req.body.From,
+                //     body: photoData.message || "",
+                //     mediaUrl: [
+                //         photoData.mediaUrl
+                //     ]
+                // });
+
+                await userRef.set({
+                    photoSent: FieldValue.increment(1),
+                    lastMessageTime: Date.now()
+                }, { merge: true });
+
+                twiml.message(photoData.message || "").media(photoData.mediaUrl);
+
+            }
+            return res.end(twiml.toString());
+    }
+
 
     logger.info(`${from}: maxTokens ${maxTokens}`);
     switch (role) {
@@ -38,14 +74,12 @@ exports.receiveMessage = onRequest(async (req, res) => {
         default:
             logger.info('Role is Guest or User.');
             if (maxTokens === 0) {
-                const twiml = new twilio.twiml.MessagingResponse();
                 twiml.message(await loadTemplate('welcome', {}));
                 return res.end(twiml.toString());
             }
             break;
     }
 
-    const twiml = new twilio.twiml.MessagingResponse();
     res.writeHead(200, { 'Content-Type': 'text/xml' });
     res.end(twiml.toString());
 
@@ -59,6 +93,24 @@ exports.receiveMessage = onRequest(async (req, res) => {
 
         const transcription = await transcribeAudio(buffer, contentType);
         incomingMessage = transcription.text;
+    }
+    if (hasImage && data.role === roles.admin) {
+        logger.info('Saving photo on database', {
+            media: req.body.MediaUrl0,
+            message: incomingMessage
+        });
+        // TODO: salvar imagem em banco
+        await db.collection('settings').doc('photo').set({
+            active: true,
+            mediaUrl: req.body.MediaUrl0,
+            message: incomingMessage,
+            updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+        await cliente.messages.create({
+            from: req.body.To,
+            to: req.body.From,
+            body: "Foto salva com sucesso!"
+        });
     }
 
     const threadId = await threadManager.getOrCreateThread(from);
