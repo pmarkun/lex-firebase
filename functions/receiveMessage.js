@@ -9,6 +9,10 @@ const { roles } = require('./roles');
 const { FieldValue } = require('firebase-admin/firestore'); // Importando FieldValue
 const { loadTemplate, transcribeAudio } = require('./util');
 const MessageSender = require('./messageSender');
+const { firebase } = require("googleapis/build/src/apis/firebase");
+
+const db = require('../firebase');
+
 
 const cliente = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
