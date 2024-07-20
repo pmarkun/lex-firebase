@@ -31,11 +31,7 @@ class LangChainHandler {
             getMessageHistory: async (sessionId) => {
                 if (!messageHistories[sessionId]) {
                     messageHistories[sessionId] = new InMemoryChatMessageHistory();
-                    const lastSummary = await this.memoryHandler.loadSummary(sessionId);
                     const lastMessages = await this.memoryHandler.getMessagesSinceLastSummary(sessionId);
-                    if (lastSummary) {
-                        await messageHistories[sessionId].addMessages([new AIMessage({ content: lastSummary })]);
-                    }
                     await messageHistories[sessionId].addMessages(lastMessages.map(msg => {
                         if (msg.role === 'human') {
                             return new HumanMessage({ content: msg.content });
@@ -78,8 +74,6 @@ class LangChainHandler {
             new HumanMessage({ content: inputMessage }),
             new AIMessage({ content: fullResponse })
         ]);
-
-        logger.info('Memory saved', chatHistory);
 
         await this.memoryHandler.addMessages(sessionId, [
             { role: 'human', content: inputMessage },

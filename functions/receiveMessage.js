@@ -51,7 +51,6 @@ exports.receiveMessage = onRequest(async (req, res) => {
 
     if (hasAudio) {
         const audioUrl = req.body.MediaUrl0;
-        //const audioContentType = req.body.MediaContentType0;
         logger.info('DOWNLOAD MEDIA', { url: req.body.MediaUrl0, MessageType: req.body.MessageType, ContentType: req.body.MediaContentType0 });
         let { contentType, buffer } = await downloadTwilioMedia(audioUrl);
         if (buffer.length > 10000) {

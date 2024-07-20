@@ -3,7 +3,7 @@ const OpenAI = require('openai');
 const { getFirestore } = require('firebase-admin/firestore');
 require('dotenv').config();
 
-const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, OPENAI_API_KEY, ASSISTANT_ID } = process.env;
+const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, OPENAI_API_KEY, ASSISTANT_ID, FIRESTORE_DB } = process.env;
 
 if (!admin.apps.length) {
     const serviceAccount = require('./serviceAccountKey.json');
@@ -12,7 +12,7 @@ if (!admin.apps.length) {
     });
 }
 
-const db = getFirestore("lex-dev");
+const db = getFirestore(FIRESTORE_DB);
 const openai = new OpenAI({ OPENAI_API_KEY });
 
 if (!OPENAI_API_KEY) throw new Error("Missing required environment variable: OPENAI_API_KEY");
