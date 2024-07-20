@@ -15,17 +15,30 @@ class MemoryHandler {
         });
     }
 
-    async getMessagesSinceLastSummary(sessionId, lastSummaryDate = null) {
+    async getMessagesSinceLastSummary(sessionId) {
         try {
-            let messagesRef = this.db.collection('sessions').doc(sessionId).collection('messages').orderBy('createdAt', 'desc');
-            if (lastSummaryDate) {
-                messagesRef = messagesRef.where('createdAt', '>', lastSummaryDate);
-            }
-            const snapshot = await messagesRef.get();
+            const summary = await this.loadSummary(sessionId);
             const messages = [];
+            let messagesRef = this.db.collection('sessions').doc(sessionId).collection('messages').orderBy('createdAt', 'desc');
+            if (summary && summary.updatedAt) {
+                //adiconar a mensagem de sumario no messages
+                messages.push({ role: 'ai', content: summary.content });
+                messagesRef = messagesRef.where('createdAt', '>', summary.updatedAt);
+            }  
+
+            const snapshot = await messagesRef.get();
+            
             snapshot.forEach(doc => {
                 messages.push(doc.data());
             });
+
+            if (!summary || messages.length > 20) {
+                logger.info('Summarizing messages after 18 messages');
+                this.summarizeMessages(sessionId, messages)
+                    .then(summary => this.saveSummary(sessionId, summary)) 
+                    .catch(error => logger.error('Error in async summarization', error));
+            }
+
             return messages.reverse(); // Reverse to maintain chronological order
         } catch (error) {
             logger.error('Error loading messages since last summary', error);
@@ -50,18 +63,19 @@ class MemoryHandler {
         }
     }
 
-    async summarizeMessages(sessionId) {
+    async summarizeMessages(sessionId, messages) {
         try {
-            const lastSummaryDate = await this.getLastSummaryDate(sessionId);
-            const messages = await this.getMessagesSinceLastSummary(sessionId, lastSummaryDate);
+            const summary = await this.loadSummary(sessionId);
             const messagesContent = messages.map(msg => `${msg.role === 'human' ? 'Human' : 'AI'}: ${msg.content}`).join('\n');
-            const summaryPrompt = loadTemplate('summary', { messages: messagesContent });
 
+            const summaryPrompt = loadTemplate('summary', {});
+            const messagePrompt = loadTemplate('messagesCompile', { messages: messagesContent, lastSummary: summary.content});
             const response = await this.model.invoke([
                 new SystemMessage({ content: summaryPrompt }),
-                new HumanMessage({ content: messagesContent })
+                new HumanMessage({ content: messagePrompt })
             ]);
 
+            logger.info('Summary response:', response.content);
             return response.content;
         } catch (error) {
             logger.error('Error summarizing messages', error);
@@ -85,25 +99,13 @@ class MemoryHandler {
         try {
             const doc = await this.db.collection('sessions').doc(sessionId).get();
             if (doc.exists) {
-                return doc.data().summary || '';
+                return { content: doc.data().summary || '',
+                         updatedAt: doc.data().updatedAt || null };
             }
-            return '';
+            return {};
         } catch (error) {
             logger.error('Error loading summary from Firestore', error);
             throw new Error('Error loading summary from Firestore');
-        }
-    }
-
-    async getLastSummaryDate(sessionId) {
-        try {
-            const doc = await this.db.collection('sessions').doc(sessionId).get();
-            if (doc.exists) {
-                return doc.data().updatedAt || null;
-            }
-            return null;
-        } catch (error) {
-            logger.error('Error getting last summary date from Firestore', error);
-            throw new Error('Error getting last summary date from Firestore');
         }
     }
 }

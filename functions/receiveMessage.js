@@ -71,12 +71,12 @@ exports.receiveMessage = onRequest(async (req, res) => {
     switch (role) {
         case roles.admin:
         case roles.editor:
-            logger.info('Role is Admin or Editor');
+            logger.info('Role is Admin or Editor.');
             break;
         case roles.user:
         case roles.guest:
         default:
-            logger.info('Role is Guest or User');
+            logger.info('Role is Guest or User.');
             if (maxTokens === 0) {
                 twiml.message(await loadTemplate('welcome', {}));
                 return res.end(twiml.toString());
@@ -89,7 +89,6 @@ exports.receiveMessage = onRequest(async (req, res) => {
 
     if (hasAudio) {
         const audioUrl = req.body.MediaUrl0;
-        //const audioContentType = req.body.MediaContentType0;
         logger.info('DOWNLOAD MEDIA', { url: req.body.MediaUrl0, MessageType: req.body.MessageType, ContentType: req.body.MediaContentType0 });
         let { contentType, buffer } = await downloadTwilioMedia(audioUrl);
         if (buffer.length > 10000) {
