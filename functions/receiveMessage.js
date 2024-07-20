@@ -31,12 +31,12 @@ exports.receiveMessage = onRequest(async (req, res) => {
     switch (role) {
         case roles.admin:
         case roles.editor:
-            logger.info('Role is Admin or Editor');
+            logger.info('Role is Admin or Editor.');
             break;
         case roles.user:
         case roles.guest:
         default:
-            logger.info('Role is Guest or User');
+            logger.info('Role is Guest or User.');
             if (maxTokens === 0) {
                 const twiml = new twilio.twiml.MessagingResponse();
                 twiml.message(await loadTemplate('welcome', {}));
