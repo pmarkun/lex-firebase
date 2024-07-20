@@ -101,7 +101,7 @@ async function checkAndUpdateUserTokens(userId, profileName) {
             userData.currentTokens = 0;
         }
 
-        return { currentTokens: userData.currentTokens, maxTokens, userRef, role: userData.role };
+        return { currentTokens: userData.currentTokens, maxTokens, userRef, data: userData };
     } catch (error) {
         logger.error("Error in checkAndUpdateUserTokens", { error: error.message });
         throw error;
@@ -167,16 +167,48 @@ exports.receiveMessage = onRequest(async (req, res) => {
     // try {
         let incomingMessage = req.body.Body;
         const hasAudio = req.body.MessageType == 'audio';
+        const hasImage = req.body.MessageType == 'image';
         const from = adicionaNove(limpaNumero(req.body.From)); // O número de telefone do remetente
         const profileName = req.body.ProfileName;
 
         logger.info("Incoming message received", { message: incomingMessage, from, profileName });
 
         // Verificar permissões do usuário e tokens
-        const { currentTokens, maxTokens, userRef, role } = await checkAndUpdateUserTokens(from, profileName);
+        const { currentTokens, maxTokens, userRef, data } = await checkAndUpdateUserTokens(from, profileName);
+        
+
+        switch (incomingMessage.toUpperCase().trim()) {
+            case 'FOTO':
+                let photoData = await db.collection('settings').doc('photo').get()
+                .then(s => {
+                    if (s.exists) {
+                        return s.data();
+                    }
+                    return null
+                });
+                
+                if (photoData && photoData.active) {
+                    await cliente.messages.create({
+                        from: req.body.To,
+                        to: req.body.From,
+                        body: photoData.message || "",
+                        mediaUrl: [
+                            photoData.mediaUrl
+                        ]
+                    });
+
+                    await userRef.set({
+                        photoSent: FieldValue.increment(1),
+                        lastMessageTime: Date.now()
+                    }, { merge: true });
+            
+                }
+                return;
+        }
+
 
         logger.info(`${from}: maxTokens ${maxTokens}`);
-        switch(role) {
+        switch(data.role) {
             case roles.admin:
             case roles.editor:
                 logger.info('Role is Admin or Editor');
@@ -243,198 +275,143 @@ exports.receiveMessage = onRequest(async (req, res) => {
 
             // TODO: se audio for grande, enviar mensagem de espera
         }
+        if (hasImage && data.role === roles.admin) {
+            logger.info('Saving photo on database', {
+                media: req.body.MediaUrl0,
+                message: incomingMessage
+            });
+            // TODO: salvar imagem em banco
+            await db.collection('settings').doc('photo').set({
+                active: true,
+                mediaUrl: req.body.MediaUrl0,
+                message: incomingMessage,
+                updatedAt: FieldValue.serverTimestamp()
+            }, { merge: true });
+            await cliente.messages.create({
+                from: req.body.To,
+                to: req.body.From,
+                body: "Foto salva com sucesso!"
+            });
 
+        }
 
+        if (incomingMessage && incomingMessage.length > 0) {
+        
             
 
+            // Obter ou criar uma thread para o usuário
+            const threadId = await getOrCreateThread(from);
+            logger.info("Thread ID for user", { from, threadId });
 
-        // Obter ou criar uma thread para o usuário
-        const threadId = await getOrCreateThread(from);
-        logger.info("Thread ID for user", { from, threadId });
+            // TODO: incluir informações de total de doações, data atual e o que for necessário
+            // await openai.beta.threads.messages.create(threadId, {
+            //    role: "system",
+            //    content: ""
+            // });
 
-        // TODO: incluir informações de total de doações, data atual e o que for necessário
-        // await openai.beta.threads.messages.create(threadId, {
-        //    role: "system",
-        //    content: ""
-        // });
+            // Adicionar a mensagem ao thread
+            let userMessage = {
+                role: "user",
+                content: incomingMessage
+            }
+            await openai.beta.threads.messages.create(threadId, userMessage);
+            await userRef.collection('logs').doc(threadId).collection('messages').add({
+                ...userMessage,
+                createdAt: FieldValue.serverTimestamp()
+            });
 
-        // Adicionar a mensagem ao thread
-        let userMessage = {
-            role: "user",
-            content: incomingMessage
-        }
-        await openai.beta.threads.messages.create(threadId, userMessage);
-        await userRef.collection('logs').doc(threadId).collection('messages').add({
-            ...userMessage,
-            createdAt: FieldValue.serverTimestamp()
-        });
+            let buffer = '';
+            const run = openai.beta.threads.runs
+                .stream(threadId, {
+                    assistant_id: ASSISTANT_ID,
+                    max_completion_tokens: process.env.MAX_COMPLETION_TOKENS | 8096,
+                    max_prompt_tokens: process.env.MAX_PROMPT_TOKENS | 60000
+                })
+                .on('textCreated', async (text) => {
+                })
+                .on('textDelta', async (textDelta, snapshot) => {
+                    buffer += textDelta.value;
 
-        let buffer = '';
-        const run = openai.beta.threads.runs
-            .stream(threadId, {
-                assistant_id: ASSISTANT_ID,
-                max_completion_tokens: process.env.MAX_COMPLETION_TOKENS | 8096,
-                max_prompt_tokens: process.env.MAX_PROMPT_TOKENS | 60000
-            })
-            .on('textCreated', async (text) => {
-            })
-            .on('textDelta', async (textDelta, snapshot) => {
-                buffer += textDelta.value;
+                    if (buffer.length >= 500) {
+                        let mensagem = '';
+                        const temQuebra = buffer.lastIndexOf('\n\n') > 0;
+                        mensagem = buffer.substring(0, buffer.lastIndexOf(temQuebra ? '\n\n' : '. ') + ( temQuebra ? 2 : 1));
+                        buffer = buffer.substring(buffer.lastIndexOf(temQuebra ? '\n\n' : '. ') + ( temQuebra ? 2 : 1)).trimStart();
 
-                if (buffer.length >= 500) {
-                    let mensagem = '';
-                    const temQuebra = buffer.lastIndexOf('\n\n') > 0;
-                    mensagem = buffer.substring(0, buffer.lastIndexOf(temQuebra ? '\n\n' : '. ') + ( temQuebra ? 2 : 1));
-                    buffer = buffer.substring(buffer.lastIndexOf(temQuebra ? '\n\n' : '. ') + ( temQuebra ? 2 : 1)).trimStart();
+                        await cliente.messages.create({
+                            from: req.body.To,
+                            to: req.body.From,
+                            body: mensagem
+                        });
 
-                    await cliente.messages.create({
-                        from: req.body.To,
-                        to: req.body.From,
-                        body: mensagem
-                    });
-
-                }
-            })
-            .on('textDone', async (text, snapshot) => {
-                if (buffer.length !== 0) {
-                    // Nao mandar se buffer estiver vazio
-                    await cliente.messages.create({
-                        from: req.body.To,
-                        to: req.body.From,
-                        body: buffer
-                    });
-                }
-
-                await userRef.collection('logs').doc(threadId).collection('messages').add({
-                    createdAt: FieldValue.serverTimestamp(),
-                    role: 'assistant',
-                    ...text
-                });
-
-            })
-
-            .on('runStepCreated', async (runStep) => {
-                logger.info("runStepCreated:", JSON.stringify(runStep));
-            })
-            .on('runStepDelta', async (delta, snapshot) => {
-                logger.info("runStepDelta:", JSON.stringify(delta));
-            })
-            .on('runStepDone', async (runStep, snapshot) => {
-                logger.info("runStepDone:", JSON.stringify(runStep));
-            })
-
-
-            .on('toolCallCreated', async (toolCall) => {
-                console.log(`\nassistant > ${toolCall.type}\n\n`);
-                logger.info('TOOL CALL CREATED', toolCall);
-
-                await cliente.messages.create({
-                    from: req.body.To,
-                    to: req.body.From,
-                    body: `Um momento, pois preciso consultar meus arquivos...`
-                });
-
-            })
-            .on('toolCallDelta', async (toolCallDelta, snapshot) => {
-                logger.info('TOOL CALL DELTA', toolCallDelta);
-                if (toolCallDelta.type === 'code_interpreter') {
-                    if (toolCallDelta.code_interpreter.input) {
-                        console.log(toolCallDelta.code_interpreter.input);
                     }
-                    if (toolCallDelta.code_interpreter.outputs) {
-                        console.log('\noutput >\n');
-                        toolCallDelta.code_interpreter.outputs.forEach((output) => {
-                            if (output.type === 'logs') {
-                                console.log(`\n${output.logs}\n`);
-                            }
+                })
+                .on('textDone', async (text, snapshot) => {
+                    if (buffer.length !== 0) {
+                        // Nao mandar se buffer estiver vazio
+                        await cliente.messages.create({
+                            from: req.body.To,
+                            to: req.body.From,
+                            body: buffer
                         });
                     }
+
+                    await userRef.collection('logs').doc(threadId).collection('messages').add({
+                        createdAt: FieldValue.serverTimestamp(),
+                        role: 'assistant',
+                        ...text
+                    });
+
+                })
+
+                .on('runStepCreated', async (runStep) => {
+                    logger.info("runStepCreated:", JSON.stringify(runStep));
+                })
+                .on('runStepDelta', async (delta, snapshot) => {
+                    logger.info("runStepDelta:", JSON.stringify(delta));
+                })
+                .on('runStepDone', async (runStep, snapshot) => {
+                    logger.info("runStepDone:", JSON.stringify(runStep));
+                })
+
+
+                .on('toolCallCreated', async (toolCall) => {
+                    console.log(`\nassistant > ${toolCall.type}\n\n`);
+                    logger.info('TOOL CALL CREATED', toolCall);
+
+                    await cliente.messages.create({
+                        from: req.body.To,
+                        to: req.body.From,
+                        body: `Um momento, pois preciso consultar meus arquivos...`
+                    });
+
+                })
+                .on('toolCallDelta', async (toolCallDelta, snapshot) => {
+                    logger.info('TOOL CALL DELTA', toolCallDelta);
+                    if (toolCallDelta.type === 'code_interpreter') {
+                        if (toolCallDelta.code_interpreter.input) {
+                            console.log(toolCallDelta.code_interpreter.input);
+                        }
+                        if (toolCallDelta.code_interpreter.outputs) {
+                            console.log('\noutput >\n');
+                            toolCallDelta.code_interpreter.outputs.forEach((output) => {
+                                if (output.type === 'logs') {
+                                    console.log(`\n${output.logs}\n`);
+                                }
+                            });
+                        }
+                    }
+                }).on('toolCallDone', (toolCall) => {
+                    logger.info('TOOL CALL DONE', toolCall);
+                    // console.log("toolCallDone:", JSON.stringify(toolCall));
+                    // toolChangedLast = true;
+                }).on('end', async () => {
+                    console.log("end event");
+                    // res.end(); // Close the request
                 }
-            }).on('toolCallDone', (toolCall) => {
-                logger.info('TOOL CALL DONE', toolCall);
-                // console.log("toolCallDone:", JSON.stringify(toolCall));
-                // toolChangedLast = true;
-            }).on('end', async () => {
-                console.log("end event");
-                // res.end(); // Close the request
-            }
-        );
-
+            );
+        }
         
-        // logger.info("Message added to thread", { threadId, message: incomingMessage });
-        // console.log();
-        // console.log();
-        // console.log('incomingMessage', incomingMessage);
-        // console.log();
-        // console.log();
-
-
-        // Criar e fazer o poll da execução
-        // const run = await openai.beta.threads.runs.createAndStream(threadId, {
-        //     assistant_id: assistantId,
-        //     stream: true
-        // });
-        
-        logger.info("Run completed", { runId: run.id, status: run.status });
-        // console.log("Run completed", { runId: run.id, status: run.status });
-        
-        /*
-        switch (run.status) {
-            //If we are in any sort of intermediate state we poll
-            case 'queued':
-            case 'in_progress':
-            case 'cancelling':
-              let sleepInterval = 5000;
-    
-              if (options?.pollIntervalMs) {
-                sleepInterval = options.pollIntervalMs;
-              } else {
-                const headerInterval = response.headers.get('openai-poll-after-ms');
-                if (headerInterval) {
-                  const headerIntervalMs = parseInt(headerInterval);
-                  if (!isNaN(headerIntervalMs)) {
-                    sleepInterval = headerIntervalMs;
-                  }
-                }
-              }
-              await sleep(sleepInterval);
-              break;
-            //We return the run in any terminal state.
-            case 'requires_action':
-            case 'incomplete':
-            case 'cancelled':
-            case 'completed':
-            case 'failed':
-            case 'expired':
-              return run;
-          }
-          */
-
-
-        // // Verificar se a execução foi completada e obter a resposta
-        // if (run.status === 'completed') {
-        //     const updatedMessages = await openai.beta.threads.messages.list(run.thread_id);
-        //     const assistantMessages = updatedMessages.data.filter(msg => msg.role === 'assistant');
-        //     const assistantMessage = assistantMessages.length > 0 ? assistantMessages[0].content[0].text.value : "No response from assistant.";
-        //     logger.info("Response from assistant", { response: assistantMessage });
-
-        //     console.log('\n\n\n');
-        //     logger.info("UPDATED MESSAGES", updatedMessages);
-        //     console.log('\n\n\n');
-
-        //     // Formatar a resposta para Twilio
-        //     const twiml = new twilio.twiml.MessagingResponse();
-        //     const responseMessages = splitMessage(assistantMessage, 1500);
-
-        //     await responseMessages.forEach(async msg => {
-        //         twiml.message(msg)
-        //         await cliente.messages.create({
-        //             from: TWILIO_FROM,
-        //             to: req.body.From,
-        //             body: msg
-        //         });
-        //     });
-
 
         //     // Calcular tokens usados e atualizar tokens do usuário
         //     // TODO: verificar se a resposta inclui total de tokens utilizados.
