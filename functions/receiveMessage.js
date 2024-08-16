@@ -79,6 +79,7 @@ exports.receiveMessage = onRequest(async (req, res) => {
             logger.info('Role is Guest or User.');
             if (maxTokens === 0) {
                 twiml.message(await loadTemplate('welcome', {}));
+                await userRef.set({maxTokens: 2000}, { merge: true }); //atualiza o máximo de tokens para 2000
                 return res.end(twiml.toString());
             }
             break;
