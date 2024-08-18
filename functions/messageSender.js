@@ -43,6 +43,8 @@ class MessageSender {
         if (this.sending) return;
         this.sending = true;
 
+        console.log('SENDING...', from, to, this.messageQueue.length);
+
         while (this.messageQueue.length > 0) {
             const { body } = this.messageQueue.shift();
             try {

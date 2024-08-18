@@ -4,7 +4,7 @@ const { db } = require('./config');
 const { roles } = require('./roles');
 
 class UserTokenManager {
-    async checkAndUpdateUserTokens(userId, profileName) {
+    async checkAndUpdateUserTokens(userId, whatsAppID, profileName) {
         try {
             const userRef = db.collection('users').doc(userId);
             const userDoc = await userRef.get();
@@ -14,6 +14,7 @@ class UserTokenManager {
                 userData = {
                     phone: userId,
                     profileName,
+                    whatsAppID,
                     currentTokens: 0,
                     role: roles.guest,
                     maxTokens: 0, //Habilitando para que todos possam conversar com a Lex

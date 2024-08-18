@@ -16,22 +16,25 @@ const db = require('./firebase');
 
 const cliente = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-const userTokenManager = new UserTokenManager();
-const threadManager = new ThreadManager();
-const langChainHandler = new LangChainHandler();
-const messageSender = new MessageSender();
 
 exports.receiveMessage = onRequest(async (req, res) => {
+    const userTokenManager = new UserTokenManager();
+    const threadManager = new ThreadManager();
+    const langChainHandler = new LangChainHandler();
+    const messageSender = new MessageSender();
+    
+
     let incomingMessage = req.body.Body;
     const hasAudio = req.body.MessageType == 'audio';
     const hasImage = req.body.MessageType == 'image';
+    const whatsAppID = limpaNumero(req.body.From);
     const from = adicionaNove(limpaNumero(req.body.From));
     const profileName = req.body.ProfileName;
 
-    logger.info("Incoming message received", { message: incomingMessage, from, profileName });
+    logger.info("Incoming message received", { message: incomingMessage, from, profileName, whatsAppID });
 
     const twiml = new twilio.twiml.MessagingResponse();
-    const { currentTokens, maxTokens, userRef, role } = await userTokenManager.checkAndUpdateUserTokens(from, profileName);
+    const { currentTokens, maxTokens, userRef, role } = await userTokenManager.checkAndUpdateUserTokens(from, whatsAppID, profileName);
 
 
     // Envio de conteúdo por palavra-chave
@@ -88,6 +91,8 @@ exports.receiveMessage = onRequest(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/xml' });
     res.end(twiml.toString());
 
+
+    // INIT BACKGROUND CODE
     if (hasAudio) {
         const audioUrl = req.body.MediaUrl0;
         logger.info('DOWNLOAD MEDIA', { url: req.body.MediaUrl0, MessageType: req.body.MessageType, ContentType: req.body.MediaContentType0 });
@@ -104,7 +109,7 @@ exports.receiveMessage = onRequest(async (req, res) => {
             media: req.body.MediaUrl0,
             message: incomingMessage
         });
-        // TODO: salvar imagem em banco
+        // Salvar imagem em banco
         await db.collection('settings').doc('photo').set({
             active: true,
             mediaUrl: req.body.MediaUrl0,
@@ -116,10 +121,13 @@ exports.receiveMessage = onRequest(async (req, res) => {
             to: req.body.From,
             body: "Foto salva com sucesso!"
         });
+        return;
     }
 
     const threadId = await threadManager.getOrCreateThread(from);
     logger.info("Thread ID for user", { from, threadId });
+
+    console.log(req.body);
 
     await langChainHandler.processResponse(threadId, userRef, req.body.To, req.body.From, incomingMessage);
 });
