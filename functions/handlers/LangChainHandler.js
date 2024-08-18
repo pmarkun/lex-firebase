@@ -56,6 +56,12 @@ class LangChainHandler {
             configurable: {
                 sessionId: sessionId,
             },
+            metadata: {
+                session_id: sessionId,
+                twilioFrom: twilioFrom,
+                twilioTo: twilioTo,
+                userRef: userRef,
+            }
         };
 
         const inputs = { input: inputMessage };

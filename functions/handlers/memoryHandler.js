@@ -22,7 +22,6 @@ class MemoryHandler {
             let messagesRef = this.db.collection('sessions').doc(sessionId).collection('messages').orderBy('createdAt', 'desc');
             if (summary && summary.updatedAt) {
                 //adiconar a mensagem de sumario no messages
-                messages.push({ role: 'ai', content: summary.content });
                 messagesRef = messagesRef.where('createdAt', '>', summary.updatedAt);
             }  
 
@@ -32,11 +31,15 @@ class MemoryHandler {
                 messages.push(doc.data());
             });
 
-            if (!summary || messages.length > 20) {
-                logger.info('Summarizing messages after 18 messages');
+            if (!summary || messages.length > 10) {
+                logger.info('Summarizing messages after 9 messages');
                 this.summarizeMessages(sessionId, messages)
                     .then(summary => this.saveSummary(sessionId, summary)) 
                     .catch(error => logger.error('Error in async summarization', error));
+            }
+
+            if (summary && summary.content) {
+                messages.push({ role: 'ai', content: summary.content });
             }
 
             return messages.reverse(); // Reverse to maintain chronological order
