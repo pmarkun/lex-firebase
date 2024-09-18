@@ -1,133 +1,114 @@
+// receiveMessage.js
 const { onRequest } = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
-const twilio = require('twilio');
-const { limpaNumero, adicionaNove, downloadTwilioMedia } = require('./util');
+
+const {
+  TwilioMessageHandler,
+  TwilioMessageSender,
+} = require('./adapters/twilioAdapter');
+
+const {
+    WebMessageHandler,
+    WebMessageSender,
+} = require('./adapters/webAdapter');
+
+const {
+  limpaNumero,
+  adicionaNove,
+  loadTemplate,
+  transcribeAudio,
+  downloadTwilioMedia
+} = require('./util');
+
 const UserTokenManager = require('./UserTokenManager');
 const ThreadManager = require('./ThreadManager');
-const LangChainHandler = require('./handlers/LangChainHandler'); // Atualizado para caminho correto
+const LangChainHandler = require('./handlers/LangChainHandler');
 const { roles } = require('./roles');
-const { FieldValue } = require('firebase-admin/firestore'); // Importando FieldValue
-const { loadTemplate, transcribeAudio } = require('./util');
-const MessageSender = require('./messageSender');
-const { firebase } = require("googleapis/build/src/apis/firebase");
+const { FieldValue } = require('firebase-admin/firestore');
 
 const db = require('./firebase');
 
+const userTokenManager = new UserTokenManager();
+const threadManager = new ThreadManager();
 
-const cliente = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
 
 
 exports.receiveMessage = onRequest(async (req, res) => {
-    const userTokenManager = new UserTokenManager();
-    const threadManager = new ThreadManager();
-    const langChainHandler = new LangChainHandler();
-    const messageSender = new MessageSender();
-    
+    //const messageHandler = new WebMessageHandler();
+    //const messageSender = new WebMessageSender(res);
 
-    let incomingMessage = req.body.Body;
-    const hasAudio = req.body.MessageType == 'audio';
-    const hasImage = req.body.MessageType == 'image';
-    const whatsAppID = limpaNumero(req.body.From);
-    const from = adicionaNove(limpaNumero(req.body.From));
-    const profileName = req.body.ProfileName;
+    const messageHandler = new TwilioMessageHandler();
+    const messageSender = new TwilioMessageSender();
+    const langChainHandler = new LangChainHandler(messageSender);
+  // Parse the incoming message using the adapter
+  let message = messageHandler.parseRequest(req);
+  logger.info("Incoming message received", {
+    request: req.body,
+    });
 
-    logger.info("Incoming message received", { message: incomingMessage, from, profileName, whatsAppID });
+  const from = adicionaNove(limpaNumero(message.from));
+  const profileName = message.profileName;
 
-    const twiml = new twilio.twiml.MessagingResponse();
-    const { currentTokens, maxTokens, userRef, role } = await userTokenManager.checkAndUpdateUserTokens(from, whatsAppID, profileName);
+  logger.info("Incoming message received", {
+    message: message.body,
+    from,
+    profileName,
+  });
 
+  // Check and update user tokens
+  const { currentTokens, maxTokens, userRef, role } = await userTokenManager.checkAndUpdateUserTokens(from, profileName);
 
-    // Envio de conteúdo por palavra-chave
-    switch (incomingMessage.toUpperCase().trim()) {
-        case 'FOTO':
-            let photoData = await db.collection('settings').doc('photo').get()
-                .then(s => {
-                    if (s.exists) {
-                        return s.data();
-                    }
-                    return null
-                });
-            
-            if (photoData && photoData.active) {
-                // await cliente.messages.create({
-                //     from: req.body.To,
-                //     to: req.body.From,
-                //     body: photoData.message || "",
-                //     mediaUrl: [
-                //         photoData.mediaUrl
-                //     ]
-                // });
+  logger.info(`${from}: maxTokens ${maxTokens}`);
 
-                await userRef.set({
-                    photoSent: FieldValue.increment(1),
-                    lastMessageTime: Date.now()
-                }, { merge: true });
+  // Handle user roles and token limits
+  if ([roles.guest, roles.user].includes(role)) {
+    logger.info('Role is Guest or User.');
+    if (maxTokens === 0) {
+      const welcomeMessage = await loadTemplate('welcome', {});
+      messageSender.sendResponse(res, { body: welcomeMessage });
+      await userRef.set({ maxTokens: 2000 }, { merge: true }); // Update maxTokens to 2000
+      return;
+    }
+  } else {
+    logger.info('Role is Admin or Editor.');
+  }
 
-                twiml.message(photoData.message || "").media(photoData.mediaUrl);
+  // Send an empty response immediately (acknowledgment)
+  messageSender.sendResponse(res, {});
 
-            }
-            return res.end(twiml.toString());
+  // Handle audio messages
+  if (message.messageType === 'audio') {
+    const audioUrl = message.mediaUrl;
+    logger.info('DOWNLOAD MEDIA', {
+      url: audioUrl,
+      MessageType: message.messageType,
+      ContentType: message.mediaContentType,
+    });
+
+    let { contentType, buffer } = await downloadTwilioMedia(audioUrl);
+
+    if (buffer.length > 10000) {
+      const audioTranscribeMessage = await loadTemplate('audioTranscribe', {});
+      await messageSender.sendMessage(message.from, message.to, {
+        body: audioTranscribeMessage,
+      });
     }
 
+    const transcription = await transcribeAudio(buffer, contentType);
+    message.body = transcription.text;
+    logger.info('Audio transcription completed', { transcription: message.body });
+  }
 
-    logger.info(`${from}: maxTokens ${maxTokens}`);
-    switch (role) {
-        case roles.admin:
-        case roles.editor:
-            logger.info('Role is Admin or Editor.');
-            break;
-        case roles.user:
-        case roles.guest:
-        default:
-            logger.info('Role is Guest or User.');
-            if (maxTokens === 0) {
-                twiml.message(await loadTemplate('welcome', {}));
-                await userRef.set({maxTokens: 2000}, { merge: true }); //atualiza o máximo de tokens para 2000
-                return res.end(twiml.toString());
-            }
-            break;
-    }
+  // Proceed with processing the message
+  const threadId = await threadManager.getOrCreateThread(from);
+  logger.info("Thread ID for user", { from, threadId });
 
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end(twiml.toString());
-
-
-    // INIT BACKGROUND CODE
-    if (hasAudio) {
-        const audioUrl = req.body.MediaUrl0;
-        logger.info('DOWNLOAD MEDIA', { url: req.body.MediaUrl0, MessageType: req.body.MessageType, ContentType: req.body.MediaContentType0 });
-        let { contentType, buffer } = await downloadTwilioMedia(audioUrl);
-        if (buffer.length > 10000) {
-            await messageSender.sendMessage(req.body.To, req.body.From, loadTemplate('audioTranscribe', {}));
-        }
-
-        const transcription = await transcribeAudio(buffer, contentType);
-        incomingMessage = transcription.text;
-    }
-    if (hasImage && data.role === roles.admin) {
-        logger.info('Saving photo on database', {
-            media: req.body.MediaUrl0,
-            message: incomingMessage
-        });
-        // Salvar imagem em banco
-        await db.collection('settings').doc('photo').set({
-            active: true,
-            mediaUrl: req.body.MediaUrl0,
-            message: incomingMessage,
-            updatedAt: FieldValue.serverTimestamp()
-        }, { merge: true });
-        await cliente.messages.create({
-            from: req.body.To,
-            to: req.body.From,
-            body: "Foto salva com sucesso!"
-        });
-        return;
-    }
-
-    const threadId = await threadManager.getOrCreateThread(from);
-    logger.info("Thread ID for user", { from, threadId });
-
-    console.log(req.body);
-
-    await langChainHandler.processResponse(threadId, userRef, req.body.To, req.body.From, incomingMessage);
+  await langChainHandler.processResponse(
+    threadId,
+    userRef,
+    message.to,
+    message.from,
+    message.body
+  );
 });

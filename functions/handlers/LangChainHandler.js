@@ -1,28 +1,22 @@
+// LangChainHandler.js
+
 const { InMemoryChatMessageHistory } = require("@langchain/core/chat_history");
 const { ChatPromptTemplate } = require("@langchain/core/prompts");
-const { RunnableWithMessageHistory, RunnablePassthrough, RunnableSequence } = require("@langchain/core/runnables");
-const { OpenAIEmbeddings, ChatOpenAI } = require("@langchain/openai");
+const { RunnableWithMessageHistory } = require("@langchain/core/runnables");
+const { ChatOpenAI } = require("@langchain/openai");
 const { HumanMessage, AIMessage } = require("@langchain/core/messages");
 const MemoryHandler = require('./memoryHandler');
-const MessageSender = require('../messageSender');
 const logger = require("firebase-functions/logger");
 const { loadTemplate } = require("../util");
 
-const weaviate = require('weaviate-client').default;
-const { WeaviateStore } = require("@langchain/weaviate");
-
-const messageHistories = {};
-
 class LangChainHandler {
-    constructor() {
-
+    constructor(messageSender) {
         this.model = new ChatOpenAI({
             apiKey: process.env.OPENAI_API_KEY,
             model: "gpt-4o-mini",
-            temperature: 0
+            temperature: 0,
         });
 
-        // Prompt Default
         this.prompt = ChatPromptTemplate.fromMessages([
             ["system", loadTemplate('default', {})],
             ["ai", loadTemplate('rag'), { loaded_rag: "{loaded_rag}" }],
@@ -30,79 +24,44 @@ class LangChainHandler {
             ["human", "{input}"],
         ]);
 
-
-
-
-        // The `RunnablePassthrough.assign()` is used here to passthrough the input from the `.invoke()`
-        // call (in this example it's the question), along with any inputs passed to the `.assign()` method.
-        // In this case, we're passing the schema.
-
-        this.getRag = async (input) => {
-
-            // RAG
-            const weaviateClient = await weaviate.connectToWeaviateCloud(
-                process.env.WEAVIATE_HOST,
-                {
-                    headers: {
-                        'X-Openai-Api-Key': process.env.OPENAI_API_KEY
-                    },
-                    authCredentials: new weaviate.ApiKey(process.env.WEAVIATE_API_KEY),
-                }
-            )
-    
-            const result = await weaviateClient.collections.get('PositiveLibraryDocument')
-                .query.nearText(input);
-            return result.objects;
-            
-        }
-
-
-
-
+        // Initialize message history storage
+        this.messageHistories = {};
 
         this.memoryHandler = new MemoryHandler();
-        this.messageSender = new MessageSender();
+        this.messageSender = messageSender; // Injected messageSender
     }
 
-
-
-
-    async processResponse(threadId, userRef, twilioFrom, twilioTo, inputMessage) {
-
-
-        const sessionId = threadId;  // Usar threadId como sessionId
+    async processResponse(threadId, userRef, from, to, inputMessage) {
+        const sessionId = threadId;
         const config = {
             configurable: {
                 sessionId: sessionId,
             },
             metadata: {
                 session_id: sessionId,
-                twilioFrom: twilioFrom,
-                twilioTo: twilioTo,
+                from: from,
+                to: to,
                 userRef: userRef,
-            }
+            },
         };
 
-        const inputs = { 
+        const inputs = {
             input: inputMessage,
-            loaded_rag: {} //REMOVIDO POR ENQUANTO await this.getRag(inputMessage)
+            loaded_rag: {}, // Removed RAG for now
         };
 
         logger.info('Processing input', { inputs });
 
-        const chain = this.prompt
-            // .pipe(weaviateRagChain)
-            // .pipe(this.withMessageHistory)
-            .pipe(this.model);
+        const chain = this.prompt.pipe(this.model);
 
         // Message History
         const withMessageHistory = new RunnableWithMessageHistory({
             runnable: chain,
             getMessageHistory: async (sessionId) => {
-                if (!messageHistories[sessionId]) {
-                    messageHistories[sessionId] = new InMemoryChatMessageHistory();
+                if (!this.messageHistories[sessionId]) {
+                    this.messageHistories[sessionId] = new InMemoryChatMessageHistory();
                     const lastMessages = await this.memoryHandler.getMessagesSinceLastSummary(sessionId);
-                    await messageHistories[sessionId].addMessages(lastMessages.map(msg => {
+                    await this.messageHistories[sessionId].addMessages(lastMessages.map(msg => {
                         if (msg.role === 'human') {
                             return new HumanMessage({ content: msg.content });
                         } else {
@@ -110,7 +69,7 @@ class LangChainHandler {
                         }
                     }));
                 }
-                return messageHistories[sessionId];
+                return this.messageHistories[sessionId];
             },
             inputMessagesKey: "input",
             historyMessagesKey: "chat_history",
@@ -118,21 +77,19 @@ class LangChainHandler {
 
         const responseStream = await withMessageHistory.stream(inputs, config);
 
-        // const responseStream = await chain.pipe(new StringOutputParser()).stream(inputMessage);
-
         // Send message via stream and collect full response
-        const fullResponse = await this.messageSender.sendMessage(twilioFrom, twilioTo, responseStream);
+        const fullResponse = await this.messageSender.sendMessage(from, to, responseStream);
         logger.info('Response sent via stream');
 
         const chatHistory = await withMessageHistory.getMessageHistory(sessionId);
         await chatHistory.addMessages([
             new HumanMessage({ content: inputMessage }),
-            new AIMessage({ content: fullResponse })
+            new AIMessage({ content: fullResponse }),
         ]);
 
         await this.memoryHandler.addMessages(sessionId, [
             { role: 'human', content: inputMessage },
-            { role: 'ai', content: fullResponse }
+            { role: 'ai', content: fullResponse },
         ]);
 
         logger.info('Message logged');
