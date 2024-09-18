@@ -52,13 +52,6 @@ class LangChainHandler {
     
             const result = await weaviateClient.collections.get('PositiveLibraryDocument')
                 .query.nearText(input);
-        
-            console.log('\n\n\n');
-            console.log(JSON.stringify(result, null, 2));
-            console.log('retornei objetos');
-            console.log('\n\n\n');
-            
-
             return result.objects;
             
         }
@@ -92,23 +85,10 @@ class LangChainHandler {
 
         const inputs = { 
             input: inputMessage,
-            loaded_rag: await this.getRag(inputMessage)
+            loaded_rag: {} //REMOVIDO POR ENQUANTO await this.getRag(inputMessage)
         };
 
         logger.info('Processing input', { inputs });
-
-        // const results = await this.runWeaviate(inputMessage);
-        // console.log('WEAVIATE RESULTS', results);
-        
-        // const weaviateRagChain = RunnablePassthrough.assign({
-        //     loaded_rag: async () => {
-        //         console.log('\n\n\n');
-        //         console.log('GETTING RAG FOR:', inputMessage)
-        //         console.log('\n\n\n');
-        //         return await this.getRag(inputMessage);
-        //     }
-        // });
-        
 
         const chain = this.prompt
             // .pipe(weaviateRagChain)
@@ -143,10 +123,6 @@ class LangChainHandler {
         // Send message via stream and collect full response
         const fullResponse = await this.messageSender.sendMessage(twilioFrom, twilioTo, responseStream);
         logger.info('Response sent via stream');
-
-
-
-
 
         const chatHistory = await withMessageHistory.getMessageHistory(sessionId);
         await chatHistory.addMessages([

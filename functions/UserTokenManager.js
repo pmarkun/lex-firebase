@@ -18,7 +18,10 @@ class UserTokenManager {
                     currentTokens: 0,
                     role: roles.guest,
                     maxTokens: 0, //Habilitando para que todos possam conversar com a Lex
-                    lastMessageTime: FieldValue.serverTimestamp()
+                    lastMessageTime: FieldValue.serverTimestamp(),
+                    createdAt: FieldValue.serverTimestamp(),
+                    updatedAt: FieldValue.serverTimestamp()
+
                 };
                 await userRef.set(userData);
             }
