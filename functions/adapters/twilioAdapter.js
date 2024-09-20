@@ -2,22 +2,22 @@
 
 const twilio = require('twilio');
 const { Message, MessageHandler, MessageSender } = require('./messageAdapter');
+const { limpaNumero, adicionaNove } = require('../util');
 const logger = require("firebase-functions/logger");
 
 class TwilioMessageHandler extends MessageHandler {
   parseRequest(req) {
     const body = req.body.Body;
-    const from = req.body.From;
-    const to = req.body.To;
+    const user = adicionaNove(limpaNumero(req.body.From));;
+    const bot = req.body.To;
     const profileName = req.body.ProfileName;
     const messageType = req.body.MessageType;
     const mediaUrl = req.body.MediaUrl0;
     const mediaContentType = req.body.MediaContentType0;
-
     return new Message({
       body,
-      from,
-      to,
+      user,
+      bot,
       profileName,
       messageType,
       mediaUrl,
@@ -37,7 +37,7 @@ class TwilioMessageSender extends MessageSender {
   }
 
   // Improved sendMessage method with buffer handling and queue processing
-  async sendMessage(from, to, responseStream) {
+  async sendMessage(user, bot, responseStream) {
     let fullResponse = ''; // Collect the full response
 
     if (typeof responseStream === 'string') {
@@ -60,7 +60,7 @@ class TwilioMessageSender extends MessageSender {
 
     // Push remaining buffer to the queue
     if (this.buffer.length > 0) {
-      this.messageQueue.push({ from, to, body: this.buffer });
+      this.messageQueue.push({ user, bot, body: this.buffer });
       this.buffer = '';
     }
 
@@ -85,9 +85,9 @@ class TwilioMessageSender extends MessageSender {
     this.sending = true;
 
     while (this.messageQueue.length > 0) {
-      const { from, to, body } = this.messageQueue.shift();
+      const { user, bot, body } = this.messageQueue.shift();
       try {
-        const response = await this.client.messages.create({ from, to, body });
+        const response = await this.client.messages.create({ user, bot, body });
         logger.info('Message sent', { body, response });
       } catch (error) {
         logger.error('Error sending message', { error, body });

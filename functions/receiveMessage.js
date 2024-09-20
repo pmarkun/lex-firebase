@@ -1,65 +1,54 @@
-// receiveMessage.js
 const { onRequest } = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
-
-const {
-  TwilioMessageHandler,
-  TwilioMessageSender,
-} = require('./adapters/twilioAdapter');
-
-const {
-    WebMessageHandler,
-    WebMessageSender,
-} = require('./adapters/webAdapter');
-
-const {
-  limpaNumero,
-  adicionaNove,
-  loadTemplate,
-  transcribeAudio,
-  downloadTwilioMedia
-} = require('./util');
-
+const { loadTemplate, transcribeAudio, downloadTwilioMedia } = require('./util');
 const UserTokenManager = require('./UserTokenManager');
 const ThreadManager = require('./ThreadManager');
 const LangChainHandler = require('./handlers/LangChainHandler');
 const { roles } = require('./roles');
 const { FieldValue } = require('firebase-admin/firestore');
-
 const db = require('./firebase');
+require('dotenv').config();  // Carrega o .env
 
 const userTokenManager = new UserTokenManager();
 const threadManager = new ThreadManager();
 
+// Função para carregar dinamicamente o adaptador com base na variável de ambiente
+function loadAdapter(adapterName) {
+  try {
+    // Constroi o caminho do arquivo e nome das classes com base no adapterName
+    const adapterPath = `./adapters/${adapterName}Adapter`;
+    const HandlerClass = require(adapterPath)[`${adapterName.charAt(0).toUpperCase() + adapterName.slice(1)}MessageHandler`];
+    const SenderClass = require(adapterPath)[`${adapterName.charAt(0).toUpperCase() + adapterName.slice(1)}MessageSender`];
+    
+    return {
+      messageHandler: new HandlerClass(),
+      messageSender: new SenderClass(),
+    };
+  } catch (error) {
+    logger.error(`Failed to load adapter: ${adapterName}`, error);
+    throw new Error(`Invalid adapter specified: ${adapterName}`);
+  }
+}
 
+// Carrega o adaptador com base na variável de ambiente
+const adapterName = process.env.MESSAGE_ADAPTER || 'twilio';  // Padrão para 'twilio'
+const { messageHandler, messageSender } = loadAdapter(adapterName);
 
+const langChainHandler = new LangChainHandler(messageSender);
 
 exports.receiveMessage = onRequest(async (req, res) => {
-    //const messageHandler = new WebMessageHandler();
-    //const messageSender = new WebMessageSender(res);
-
-    const messageHandler = new TwilioMessageHandler();
-    const messageSender = new TwilioMessageSender();
-    const langChainHandler = new LangChainHandler(messageSender);
-  // Parse the incoming message using the adapter
+  // Parse the incoming message using the selected adapter
   let message = messageHandler.parseRequest(req);
   logger.info("Incoming message received", {
     request: req.body,
-    });
-
-  const from = adicionaNove(limpaNumero(message.from));
-  const profileName = message.profileName;
-
-  logger.info("Incoming message received", {
-    message: message.body,
-    from,
-    profileName,
   });
 
-  // Check and update user tokens
-  const { currentTokens, maxTokens, userRef, role } = await userTokenManager.checkAndUpdateUserTokens(from, profileName);
+  
+  const profileName = message.profileName;
+  const user = message.user;
 
-  logger.info(`${from}: maxTokens ${maxTokens}`);
+  // Check and update user tokens
+  const { currentTokens, maxTokens, userRef, role } = await userTokenManager.checkAndUpdateUserTokens(user, profileName);
 
   // Handle user roles and token limits
   if ([roles.guest, roles.user].includes(role)) {
@@ -101,14 +90,14 @@ exports.receiveMessage = onRequest(async (req, res) => {
   }
 
   // Proceed with processing the message
-  const threadId = await threadManager.getOrCreateThread(from);
-  logger.info("Thread ID for user", { from, threadId });
+  const threadId = await threadManager.getOrCreateThread(user);
+  logger.info("Thread ID for user", { user, threadId });
 
   await langChainHandler.processResponse(
     threadId,
     userRef,
-    message.to,
-    message.from,
+    message.user,
+    message.bot,
     message.body
   );
 });

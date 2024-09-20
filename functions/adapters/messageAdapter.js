@@ -1,10 +1,10 @@
 // adapters/messageAdapter.js
 
 class Message {
-    constructor({ body, from, to, profileName, messageType, mediaUrl, mediaContentType }) {
+    constructor({ body, user, bot, profileName, messageType, mediaUrl, mediaContentType }) {
       this.body = body;
-      this.from = from;
-      this.to = to;
+      this.user = user;
+      this.bot = bot;
       this.profileName = profileName;
       this.messageType = messageType;
       this.mediaUrl = mediaUrl;
@@ -19,7 +19,7 @@ class Message {
   }
   
   class MessageSender {
-    sendMessage(to, from, messageContent) {
+    sendMessage(bot, user, messageContent) {
       throw new Error("Method 'sendMessage' must be implemented.");
     }
   

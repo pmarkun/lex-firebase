@@ -31,7 +31,7 @@ class LangChainHandler {
         this.messageSender = messageSender; // Injected messageSender
     }
 
-    async processResponse(threadId, userRef, from, to, inputMessage) {
+    async processResponse(threadId, userRef, user, bot, inputMessage) {
         const sessionId = threadId;
         const config = {
             configurable: {
@@ -39,8 +39,8 @@ class LangChainHandler {
             },
             metadata: {
                 session_id: sessionId,
-                from: from,
-                to: to,
+                user: bot,
+                bot: bot,
                 userRef: userRef,
             },
         };
@@ -78,7 +78,7 @@ class LangChainHandler {
         const responseStream = await withMessageHistory.stream(inputs, config);
 
         // Send message via stream and collect full response
-        const fullResponse = await this.messageSender.sendMessage(from, to, responseStream);
+        const fullResponse = await this.messageSender.sendMessage(user, bot, responseStream);
         logger.info('Response sent via stream');
 
         const chatHistory = await withMessageHistory.getMessageHistory(sessionId);
